@@ -1,13 +1,21 @@
 import AppKit
 import QuartzCore
 
-/// Which side of the screen the shelf is docked to. The shelf is a tall, narrow strip,
-/// so only the left and right edges make sense.
+/// Which side of the screen the shelf docks to when it places itself. The shelf is a
+/// tall, narrow strip, so only the left and right edges make sense.
 enum ShelfEdge {
     case left, right
+}
 
-    /// Direction that points off the screen: -1 for the left edge, +1 for the right.
-    var outward: CGFloat { self == .left ? -1 : 1 }
+/// Where the shelf appears.
+enum ShelfPlacement: Equatable {
+    /// Docked to the left or right edge, whichever is nearer the pointer, and
+    /// vertically centred.
+    case automatic
+    /// Wherever you last dragged it. Stored relative to the display's usable area so
+    /// it lands in the same spot on any display: `x` runs from 0 (left) to 1 (right),
+    /// `top` from 0 (top of the screen) to 1 (bottom).
+    case custom(x: CGFloat, top: CGFloat)
 }
 
 /// Shows, hides, positions and animates the shelf panel.
@@ -19,7 +27,12 @@ final class ShelfPanelController {
 
     private(set) var isShown = false
     private var screen: NSScreen?
+    /// The edge used by automatic placement: the one nearest the pointer when the
+    /// last drag started.
     private var edge: ShelfEdge = .right
+    private var placement: ShelfPlacement {
+        didSet { Self.savePlacement(placement) }
+    }
     /// Bumped on every show and hide, so a hide animation that finishes late doesn't
     /// remove a panel that was shown again in the meantime.
     private var animationGeneration = 0
@@ -33,14 +46,16 @@ final class ShelfPanelController {
 
     init(viewModel: ShelfViewModel) {
         self.viewModel = viewModel
+        placement = Self.loadPlacement()
         viewController = ShelfViewController(viewModel: viewModel)
         viewController.onHide = { [weak self] in self?.hide() }
         viewController.onContentChanged = { [weak self] in self?.contentChanged() }
         viewController.onDragOutEnded = { [weak self] in self?.dragEnded() }
+        viewController.onMoved = { [weak self] in self?.userMovedShelf() }
         panel.contentView = viewController.view
 
-        // Displays plugged in, unplugged or rearranged: re-dock so the shelf isn't
-        // left off-screen or floating mid-display.
+        // Displays plugged in, unplugged or rearranged: re-place the shelf so it isn't
+        // left off-screen or in an odd spot.
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -57,27 +72,28 @@ final class ShelfPanelController {
         if isShown {
             hide()
         } else {
-            show(on: Self.screenWithMouse(), edge: edge)
+            show(on: Self.screenWithMouse())
         }
     }
 
-    /// Slides the shelf in at `edge` of `screen`. If it's already there, just makes
-    /// sure it's the right size.
-    func show(on screen: NSScreen?, edge: ShelfEdge) {
+    /// Slides the shelf in on `screen`, at its placement. If it's already there, just
+    /// makes sure it's the right size.
+    func show(on screen: NSScreen?) {
         guard let screen = screen ?? NSScreen.main else { return }
-        let target = dockedFrame(on: screen, edge: edge)
-        if isShown, self.edge == edge, self.screen?.displayNumber == screen.displayNumber {
+        let target = targetFrame(on: screen)
+        if isShown, self.screen?.displayNumber == screen.displayNumber, abs(panel.frame.minX - target.minX) < 1 {
             animate(to: target)
             return
         }
 
         self.screen = screen
-        self.edge = edge
         isShown = true
         animationGeneration += 1
 
-        // Start a little beyond the edge and fully transparent, then slide in.
-        panel.setFrame(target.offsetBy(dx: edge.outward * slideDistance, dy: 0), display: false)
+        // Start a little further toward the nearer side and fully transparent, then
+        // slide in.
+        let outward = Self.outwardDirection(of: target, on: screen)
+        panel.setFrame(target.offsetBy(dx: outward * slideDistance, dy: 0), display: false)
         panel.alphaValue = 0
         // orderFrontRegardless puts the window on screen even though Stow isn't the
         // active app, without activating Stow or making the panel key.
@@ -99,7 +115,8 @@ final class ShelfPanelController {
         let generation = animationGeneration
 
         let panel = self.panel
-        let target = panel.frame.offsetBy(dx: edge.outward * slideDistance, dy: 0)
+        let outward = Self.outwardDirection(of: panel.frame, on: screen)
+        let target = panel.frame.offsetBy(dx: outward * slideDistance, dy: 0)
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -117,13 +134,14 @@ final class ShelfPanelController {
     // MARK: - Following drags
 
     /// A file drag started somewhere on the Mac. Bring the shelf to the display the
-    /// pointer is on, at whichever side is nearer. If it's already there, it stays put.
+    /// pointer is on. If it's already there, it stays put.
     func fileDragBegan(at point: NSPoint) {
         dragGeneration += 1
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
-        let edge: ShelfEdge = point.x < screen.visibleFrame.midX ? .left : .right
-        show(on: screen, edge: edge)
+        // Automatic placement docks to whichever side is nearer the pointer.
+        edge = point.x < screen.visibleFrame.midX ? .left : .right
+        show(on: screen)
     }
 
     /// A drag ended: a file drag the monitor was following, or items dragged out of
@@ -151,25 +169,73 @@ final class ShelfPanelController {
         hide()
     }
 
-    // MARK: - Layout
+    // MARK: - Placement
 
-    /// Where the shelf sits when docked: against `edge`, vertically centred, as tall
-    /// as its items need up to 70% of the screen (the list scrolls past that).
-    private func dockedFrame(on screen: NSScreen, edge: ShelfEdge) -> NSRect {
+    /// Whether the shelf has been dragged to a spot of its own (so the menu's Reset
+    /// Shelf Position has something to do).
+    var hasCustomPlacement: Bool { placement != .automatic }
+
+    /// The user dragged the shelf somewhere. Keep it fully on screen and remember the
+    /// spot for next time.
+    private func userMovedShelf() {
+        guard let screen = panel.screen ?? Self.screenWithMouse() else { return }
+        let visible = screen.visibleFrame
+        var frame = panel.frame
+        frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+        frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+        if frame != panel.frame {
+            panel.setFrame(frame, display: true, animate: true)
+        }
+
+        self.screen = screen
+        let spareWidth = visible.width - frame.width
+        placement = .custom(
+            x: spareWidth > 0 ? (frame.minX - visible.minX) / spareWidth : 0,
+            top: (visible.maxY - frame.maxY) / visible.height
+        )
+    }
+
+    /// The menu's Reset Shelf Position command: go back to docking at the screen edge.
+    func resetPlacement() {
+        if isShown, let screen {
+            edge = panel.frame.midX < screen.visibleFrame.midX ? .left : .right
+        }
+        placement = .automatic
+        if isShown, let screen {
+            animate(to: targetFrame(on: screen))
+        }
+    }
+
+    /// Where the shelf sits on `screen`: as tall as its items need, up to 70% of the
+    /// screen (the list scrolls past that).
+    private func targetFrame(on screen: NSScreen) -> NSRect {
         // visibleFrame leaves out the menu bar and the Dock, so the shelf never
         // tucks underneath either of them.
         let visible = screen.visibleFrame
+        let width = ShelfLayout.width
         let height = min(ShelfLayout.contentHeight(itemCount: viewModel.items.count), visible.height * 0.7).rounded()
-        let x = switch edge {
-        case .left: visible.minX + ShelfLayout.screenMargin
-        case .right: visible.maxX - ShelfLayout.width - ShelfLayout.screenMargin
+
+        switch placement {
+        case .automatic:
+            let x = switch edge {
+            case .left: visible.minX + ShelfLayout.screenMargin
+            case .right: visible.maxX - width - ShelfLayout.screenMargin
+            }
+            return NSRect(x: x, y: (visible.midY - height / 2).rounded(), width: width, height: height)
+
+        case .custom(let xFraction, let topFraction):
+            // The top edge stays where you put it and the shelf grows downward. If
+            // that would run off the bottom of the screen, it's pushed up instead.
+            let x = visible.minX + xFraction * max(visible.width - width, 0)
+            let top = visible.maxY - topFraction * visible.height
+            let y = max(top - height, visible.minY)
+            return NSRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
         }
-        return NSRect(x: x, y: (visible.midY - height / 2).rounded(), width: ShelfLayout.width, height: height)
     }
 
     private func contentChanged() {
         guard isShown, let screen else { return }
-        animate(to: dockedFrame(on: screen, edge: edge))
+        animate(to: targetFrame(on: screen))
     }
 
     private func animate(to frame: NSRect) {
@@ -190,13 +256,48 @@ final class ShelfPanelController {
         let sameDisplay = NSScreen.screens.first { $0.displayNumber == screen?.displayNumber }
         guard let newScreen = sameDisplay ?? Self.screenWithMouse() else { return }
         screen = newScreen
-        panel.setFrame(dockedFrame(on: newScreen, edge: edge), display: true)
+        panel.setFrame(targetFrame(on: newScreen), display: true)
+    }
+
+    /// The direction the shelf slides out: -1 when it's nearer the screen's left
+    /// side, +1 when nearer the right.
+    private static func outwardDirection(of frame: NSRect, on screen: NSScreen?) -> CGFloat {
+        guard let screen else { return 1 }
+        return frame.midX < screen.visibleFrame.midX ? -1 : 1
     }
 
     /// The display the mouse pointer is on.
     static func screenWithMouse() -> NSScreen? {
         let mouse = NSEvent.mouseLocation
         return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    // MARK: - Saving the placement
+
+    private static let placementXKey = "ShelfPlacementX"
+    private static let placementTopKey = "ShelfPlacementTop"
+
+    private static func loadPlacement() -> ShelfPlacement {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: placementXKey) != nil, defaults.object(forKey: placementTopKey) != nil else {
+            return .automatic
+        }
+        return .custom(
+            x: CGFloat(defaults.double(forKey: placementXKey)),
+            top: CGFloat(defaults.double(forKey: placementTopKey))
+        )
+    }
+
+    private static func savePlacement(_ placement: ShelfPlacement) {
+        let defaults = UserDefaults.standard
+        switch placement {
+        case .automatic:
+            defaults.removeObject(forKey: placementXKey)
+            defaults.removeObject(forKey: placementTopKey)
+        case .custom(let x, let top):
+            defaults.set(Double(x), forKey: placementXKey)
+            defaults.set(Double(top), forKey: placementTopKey)
+        }
     }
 }
 

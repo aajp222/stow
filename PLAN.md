@@ -20,17 +20,17 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 | Remove after drag | Only when the drop succeeded; a cancelled or refused drag keeps the item. On by default, and becomes a setting in Phase 4. |
 | Hiding a shelf with items | Use the hide button on the shelf, or the menu's Show/Hide Shelf toggle. The shelf comes back on the next file drag. |
 | Hiding an empty shelf | When a drag ends, wait 0.3 s and for promised files to land (up to 10 s), then hide if the shelf is empty. |
-| When it appears | Only when the drag pasteboard's `changeCount` moved since mouse-down *and* the drag carries files or file promises. Drags that start in Stow itself are ignored. |
-| Where it docks | Left or right edge only, clear of the Dock and menu bar. It moves to the pointer's display on each new drag. It grows with its items up to 70% of the screen, then scrolls. |
+| When it appears | Whenever a file, folder or file promise is picked up in any app: the drag pasteboard's `changeCount` moved since the last mouse-up *and* the shelf can accept what's on it. Detection polls while the button is held and re-checks if the drag data changes mid-drag. Legacy file types (`NSFilenamesPboardType`, `file://` in `public.url`) count too. Drags that start in Stow itself are ignored. |
+| Where it sits | Drag the shelf by any empty part (header, labels, blank area) to put it anywhere. The spot is saved relative to the display, so it shows up in the same place on whichever display the pointer is on, and it survives relaunches. It grows downward, pushed up if it would run off the bottom. The menu's Reset Shelf Position goes back to automatic: the left or right edge nearest the pointer, vertically centred, clear of the Dock and menu bar. It grows with its items up to 70% of the screen, then scrolls. |
 | Promised files | `~/Library/Application Support/Stow/Promised/<one folder per drop>/`. Moved to the Trash when removed or cleared (10 minutes after a drag-out, so the receiving app can finish reading). Leftovers are trashed at launch. |
 | Item model | `ShelfItem.Content` is an enum, so text, links and images slot in as new cases. |
 
 ## Phases
 
-### Phase 1: Skeleton ✅ built
+### Phase 1: Skeleton ✅ working
 Menu bar icon (`tray`) with Show Shelf, Clear Shelf and Quit. No Dock icon, no window.
 
-### Phase 2: The shelf ✅ built
+### Phase 2: The shelf ✅ working
 - Non-activating floating `NSPanel` on every Space and over full-screen apps. It never takes focus.
 - Rounded background, 120 pt wide (Liquid Glass since Phase 5).
 - `NSCollectionView` with a SwiftUI item view in each cell.
@@ -39,8 +39,11 @@ Menu bar icon (`tray`) with Show Shelf, Clear Shelf and Quit. No Dock icon, no w
 - Drag one or several items out.
 - Right-click menu: Reveal in Finder, Remove.
 
-### Phase 3: Auto-appear on drag ✅ built
-Global and local mouse monitors plus the drag pasteboard check above. The shelf slides in at the nearer edge of the pointer's display.
+### Phase 3: Auto-appear on drag ✅ working
+Global and local mouse monitors plus the drag pasteboard check above. The shelf slides in on the pointer's display.
+
+### Phase 3.5: Free placement, more reliable pop-up ✅ built
+Drag the shelf anywhere, with the spot remembered and a Reset Shelf Position menu item. Detection hardening for "every file pick-up in any app" (see When it appears).
 
 ### Phase 4: Polish (after Phases 1–3 are approved)
 - Persist items across relaunches with bookmark data; drop items whose files are gone. Promised files still on the shelf survive the launch cleanup.
@@ -50,7 +53,7 @@ Global and local mouse monitors plus the drag pasteboard check above. The shelf 
 - Settings window: an AppKit window with SwiftUI inside. Options:
   - Remove after drag.
   - Launch at login via `SMAppService`. Test it from /Applications.
-  - Preferred edge: Left / Right / Nearest to pointer.
+  - Placement: automatic (nearest edge) or wherever you dragged it.
   - Only appear when the pointer nears a screen edge.
 
 ### Phase 5: Liquid Glass look ✅ built (done ahead of Phase 4)

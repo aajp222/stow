@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var toggleShelfItem: NSMenuItem?
     private var clearShelfItem: NSMenuItem?
+    private var resetPositionItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel.trashLeftoverPromisedFiles()
@@ -53,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let toggle = makeItem("Show Shelf", action: #selector(toggleShelf))
         menu.addItem(toggle)
+        let resetPosition = makeItem("Reset Shelf Position", action: #selector(resetShelfPosition))
+        menu.addItem(resetPosition)
         let clear = makeItem("Clear Shelf", action: #selector(clearShelf))
         menu.addItem(clear)
         menu.addItem(.separator())
@@ -64,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
         toggleShelfItem = toggle
         clearShelfItem = clear
+        resetPositionItem = resetPosition
     }
 
     private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
@@ -76,12 +80,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleShelfItem?.title = shelf.isShown ? "Hide Shelf" : "Show Shelf"
         clearShelfItem?.isEnabled = !viewModel.items.isEmpty
+        resetPositionItem?.isEnabled = shelf.hasCustomPlacement
     }
 
     // MARK: - Actions
 
     @objc private func toggleShelf() {
         shelf.toggle()
+    }
+
+    /// Forget where the shelf was dragged to and go back to the screen edge.
+    @objc private func resetShelfPosition() {
+        shelf.resetPlacement()
     }
 
     @objc private func clearShelf() {

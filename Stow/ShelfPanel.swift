@@ -40,7 +40,35 @@ final class ShelfPanel: NSPanel {
         animationBehavior = .none
     }
 
+    // There's no title bar to drag, so the shelf moves itself: ShelfContentView and
+    // ShelfCollectionView call followMouseDrag() (below) when you press on an empty
+    // part of the shelf. `isMovable = false` only stops the window server from
+    // moving the window on its own; moving it from code still works.
+
     // A borderless window can't become the key window, and that's deliberate:
     // becoming key would take keyboard focus from the app you're typing in. Phase 4's
     // spacebar Quick Look will revisit this.
+}
+
+extension NSWindow {
+    /// Moves the window along with the mouse until the button is released. Call it
+    /// from `mouseDown`. It's a classic AppKit tracking loop: it takes the drag events
+    /// straight off the event queue until the mouse-up arrives.
+    ///
+    /// Returns false if the mouse barely moved, meaning it was a click, not a drag.
+    func followMouseDrag() -> Bool {
+        let start = NSEvent.mouseLocation
+        let origin = frame.origin
+        var moved = false
+        while let event = nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), event.type == .leftMouseDragged {
+            let mouse = NSEvent.mouseLocation
+            let dx = mouse.x - start.x
+            let dy = mouse.y - start.y
+            // Ignore a few points of wobble so a plain click never nudges the shelf.
+            if !moved, abs(dx) < 3, abs(dy) < 3 { continue }
+            moved = true
+            setFrameOrigin(NSPoint(x: origin.x + dx, y: origin.y + dy))
+        }
+        return moved
+    }
 }

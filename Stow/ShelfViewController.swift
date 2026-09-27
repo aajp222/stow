@@ -32,6 +32,8 @@ final class ShelfViewController: NSViewController {
     var onContentChanged: () -> Void = {}
     /// A drag out of the shelf finished (dropped or cancelled).
     var onDragOutEnded: () -> Void = {}
+    /// The user dragged the shelf to a new spot.
+    var onMoved: () -> Void = {}
 
     private let dropView = ShelfDropView()
     /// Liquid Glass background. Everything visible sits inside its `contentView`.
@@ -140,7 +142,8 @@ final class ShelfViewController: NSViewController {
     /// in there instead of being layered on top.
     private func makeGlassBackground() -> NSView {
         glassView.cornerRadius = ShelfLayout.cornerRadius
-        let content = NSView()
+        let content = ShelfContentView()
+        content.onMoved = { [weak self] in self?.onMoved() }
         content.translatesAutoresizingMaskIntoConstraints = false
         glassView.contentView = content
         return content
@@ -188,6 +191,7 @@ final class ShelfViewController: NSViewController {
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.contextMenuProvider = { [weak self] in self?.makeContextMenu() }
+        collectionView.onWindowMoved = { [weak self] in self?.onMoved() }
         collectionView.autoresizingMask = [.width]
 
         scrollView.documentView = collectionView
@@ -339,6 +343,33 @@ extension ShelfViewController: NSCollectionViewDelegateFlowLayout {
         viewModel.finishDragOut(of: draggedItemIDs, operation: operation)
         draggedItemIDs = []
         onDragOutEnded()
+    }
+}
+
+/// Holds the shelf's controls inside the glass, and lets you drag the whole shelf
+/// around by any part that isn't an item or the hide button.
+private final class ShelfContentView: NSView {
+    var onMoved: () -> Void = {}
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        // The title, the empty-state picture and label, and the blank area under a
+        // short list don't need clicks of their own. Route those clicks here instead,
+        // so pressing on them and dragging moves the shelf.
+        if hit is NSTextField || hit is NSImageView || hit is NSStackView || hit is NSClipView {
+            return self
+        }
+        return hit
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.followMouseDrag() == true {
+            onMoved()
+        }
     }
 }
 

@@ -7,6 +7,8 @@ import SwiftUI
 final class ShelfCollectionView: NSCollectionView {
     /// Builds the right-click menu for the current selection. Set by ShelfViewController.
     var contextMenuProvider: () -> NSMenu? = { nil }
+    /// The user dragged the shelf by an empty part of the list.
+    var onWindowMoved: () -> Void = {}
 
     /// Accept the very first click even though the shelf's window isn't key.
     /// Without this, the first click on an inactive window is swallowed, so you'd have
@@ -31,6 +33,20 @@ final class ShelfCollectionView: NSCollectionView {
             return NSEvent.modifierFlags.contains(.command) ? [.move, .generic] : .copy
         @unknown default:
             return .copy
+        }
+    }
+
+    /// A press on an item selects and drags it as usual. A press on empty space
+    /// clears the selection and, if the mouse then moves, drags the whole shelf.
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard indexPathForItem(at: point) == nil, let window else {
+            super.mouseDown(with: event)
+            return
+        }
+        deselectAll(nil)
+        if window.followMouseDrag() {
+            onWindowMoved()
         }
     }
 
