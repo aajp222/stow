@@ -1,7 +1,8 @@
 import Foundation
 
 /// Owns the folder where file promises are written:
-/// `~/Library/Application Support/Stow/Promised/<one folder per drop>/<file>`.
+/// `Application Support/Stow/Promised/<one folder per drop>/<file>` inside Stow's
+/// sandbox container (`~/Library/Containers/com.aaryanjigarpanchal.Stow/Data/Library/`).
 ///
 /// Files made from the clipboard ("Add Clipboard Contents to Stow") live here too.
 ///
@@ -26,31 +27,18 @@ struct PromisedFileStore {
     }
 
     /// Moves promised copies to the Trash and removes their drop folders once empty.
-    /// Returns where each file ended up in the Trash, so it can be put back.
-    @discardableResult
-    func trash(_ urls: [URL]) -> [URL: URL] {
+    func trash(_ urls: [URL]) {
         let fileManager = FileManager.default
-        var trashed: [URL: URL] = [:]
         for url in urls where owns(url) {
             if fileManager.fileExists(atPath: url.path) {
                 do {
-                    var locationInTrash: NSURL?
-                    try fileManager.trashItem(at: url, resultingItemURL: &locationInTrash)
-                    trashed[url] = locationInTrash as URL?
+                    try fileManager.trashItem(at: url, resultingItemURL: nil)
                 } catch {
                     NSLog("Stow: couldn't move \(url.lastPathComponent) to the Trash: \(error.localizedDescription)")
                 }
             }
             removeIfEmpty(url.deletingLastPathComponent())
         }
-        return trashed
-    }
-
-    /// Moves a trashed copy back to where it was (Restore Last Removed Files).
-    func putBack(_ locationInTrash: URL, at original: URL) throws {
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fileManager.moveItem(at: locationInTrash, to: original)
     }
 
     /// Trashes everything in the Promised folder except `keep`. Run at launch to clear

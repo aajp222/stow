@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Sandbox itself and access to files you drop or choose come from the
+	     ENABLE_APP_SANDBOX and ENABLE_USER_SELECTED_FILES build settings. This adds
+	     security-scoped bookmarks, which let the shelf reopen your files after a
+	     relaunch. -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+</dict>
+</plist>

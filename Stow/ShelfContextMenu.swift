@@ -13,6 +13,8 @@ final class ShelfContextMenu: NSObject {
     private var targets: [ShelfItem] = []
     /// Kept alive while its Share… item is on screen.
     private var sharePicker: NSSharingServicePicker?
+    /// Folders you've given Stow access to this session (see withFolderAccess).
+    private var grantedFolders: [URL] = []
 
     init(viewModel: ShelfViewModel) {
         self.viewModel = viewModel
@@ -156,8 +158,16 @@ final class ShelfContextMenu: NSObject {
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         guard Self.runModal({ alert.runModal() }) == .alertFirstButtonReturn else { return }
+        let folder = url.deletingLastPathComponent()
         do {
-            try viewModel.rename(item.id, to: field.stringValue)
+            try withFolderAccess(
+                to: folder,
+                reason: "To rename “\(url.lastPathComponent)”, Stow needs access to the folder it's in, “\(folder.lastPathComponent)”. Click Allow."
+            ) {
+                try viewModel.rename(item.id, to: field.stringValue)
+            }
+        } catch is CancellationError {
+            return
         } catch {
             Self.showProblem("Couldn't rename “\(url.lastPathComponent)”", details: error.localizedDescription)
         }
@@ -172,11 +182,77 @@ final class ShelfContextMenu: NSObject {
         panel.message = targets.count == 1
             ? "Choose where to move “\(targets[0].displayName)”."
             : "Choose where to move \(targets.count) items."
-        guard Self.runModal({ panel.runModal() }) == .OK, let folder = panel.url else { return }
-        let problems = viewModel.move(targets.map { $0.id }, to: folder)
+        guard Self.runModal({ panel.runModal() }) == .OK, let destination = panel.url else { return }
+        var problems: [String] = []
+        for item in targets {
+            guard let url = item.fileURL else { continue }
+            let folder = url.deletingLastPathComponent()
+            do {
+                try withFolderAccess(
+                    to: folder,
+                    reason: "To move “\(url.lastPathComponent)”, Stow needs access to the folder it's in, “\(folder.lastPathComponent)”. Click Allow."
+                ) {
+                    try viewModel.move(item.id, to: destination)
+                }
+            } catch is CancellationError {
+                continue
+            } catch {
+                problems.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
         if !problems.isEmpty {
             Self.showProblem("Some items couldn't be moved", details: problems.joined(separator: "\n"))
         }
+    }
+
+    // MARK: - Folder access
+
+    /// Runs `operation`, and if the App Sandbox refuses it for lack of access to
+    /// `folder`, asks you to grant access to that folder and tries once more.
+    ///
+    /// Dropping a file on the shelf gives Stow access to that file only. Renaming or
+    /// moving it also changes the folder it's in, and the sandbox won't allow that
+    /// until you pick the folder in an Open panel yourself. Stow keeps that access for
+    /// the rest of the session, so it asks at most once per folder. Throws
+    /// CancellationError if you click Cancel.
+    private func withFolderAccess(to folder: URL, reason: String, _ operation: () throws -> Void) throws {
+        do {
+            try operation()
+        } catch let error where Self.isPermissionError(error) {
+            let panel = NSOpenPanel()
+            panel.message = reason
+            panel.prompt = "Allow"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = folder
+            guard Self.runModal({ panel.runModal() }) == .OK, let granted = panel.url else {
+                throw CancellationError()
+            }
+            if granted.startAccessingSecurityScopedResource() {
+                grantedFolders.append(granted)
+            }
+            try operation()
+        }
+    }
+
+    /// Whether `error` means "not allowed" (the sandbox, or ordinary file permissions)
+    /// rather than something like a name clash.
+    private static func isPermissionError(_ error: Error) -> Bool {
+        let error = error as NSError
+        let permissionCodes = [Int(EPERM), Int(EACCES)]
+        if error.domain == NSCocoaErrorDomain,
+           [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(error.code) {
+            return true
+        }
+        if error.domain == NSPOSIXErrorDomain, permissionCodes.contains(error.code) {
+            return true
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError,
+           underlying.domain == NSPOSIXErrorDomain, permissionCodes.contains(underlying.code) {
+            return true
+        }
+        return false
     }
 
     /// Puts the items on the clipboard, like ⌘C in Finder: paste files into a Finder

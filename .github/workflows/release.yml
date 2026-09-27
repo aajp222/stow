@@ -34,6 +34,8 @@ permissions:
 jobs:
   release:
     runs-on: macos-26
+    # Apple can hold a new developer's first notarizations for a while.
+    timeout-minutes: 180
     env:
       VERSION_INPUT: ${{ inputs.version }}
     steps:
@@ -121,12 +123,12 @@ jobs:
           NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
-          # Upload to Apple's notary service and wait for its verdict (usually a
-          # few minutes).
+          # Upload to Apple's notary service and wait for its verdict: usually a few
+          # minutes, but a new developer account's first submissions can take hours.
           ditto -c -k --keepParent build/Release/Stow.app notarize.zip
           xcrun notarytool submit notarize.zip \
             --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_APP_PASSWORD" --team-id "$NOTARY_TEAM_ID" \
-            --wait --timeout 30m --output-format json > notary.json || true
+            --wait --timeout 2h --output-format json > notary.json || true
           cat notary.json
           STATUS="$(plutil -extract status raw notary.json 2>/dev/null || echo unknown)"
           if [ "$STATUS" != "Accepted" ]; then

@@ -6,7 +6,7 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 
 - Swift. AppKit handles windows and drag-and-drop; SwiftUI draws each shelf item.
 - macOS 26+ (changed from 14+ so the shelf can use Liquid Glass).
-- App Sandbox off. Menu bar only: `LSUIElement = YES`, so there's no Dock icon.
+- App Sandbox **on** (changed from off, because the App Store requires it). Access to dropped and chosen files is `ENABLE_USER_SELECTED_FILES = readwrite`; security-scoped bookmarks come from `Stow.entitlements`. Menu bar only: `LSUIElement = YES`, so there's no Dock icon.
 - No third-party dependencies unless approved.
 - `ShelfViewModel` is the single source of truth for the shelf's items.
 - No permissions. Global *mouse* monitors don't need Accessibility access, and the hotkey uses Carbon `RegisterEventHotKey`, which doesn't need it either.
@@ -26,7 +26,8 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 | Right-click menu | On items: Open With ▸ (the default app, the others, and Other…), Share…, Rename… (renames the real file), Move…, Copy (to paste in Finder or Mail), Show in Finder, Remove, Restore Last Removed Files, Add Clipboard Contents to Stow. On empty space: just the last two. macOS adds Ask Siri (macOS 27) and Services ▸ itself; Services works because the list offers its selected files to services. Restore brings back the latest Remove, Clear or drag-out batch, pulling Stow copies back out of the Trash. Add Clipboard Contents works like a drop. Text items get Copy, Share and Remove; links also get Open Link. |
 | Item model | `ShelfItem.Content` is `.file`, `.text` or `.link`. Images that aren't files yet (image data from a drag or the clipboard) are saved as PNGs in Stow's folder and become file items, so they drag out anywhere a file can. One reader (`PasteboardContents`) handles drops and the clipboard, preferring files/promises, then links, then an image, then text. |
 | Keyboard | Clicking an item makes the shelf the key window (it's non-activating, so your app stays active). Space toggles Quick Look on the selected files (Stow activates while it's open, then hands back). Delete removes the selection. ⌃⌥S shows/hides the shelf from anywhere. |
-| Saving | `~/Library/Application Support/Stow/Shelf.plist`, rewritten on every change. Files are stored as bookmarks, so renamed or moved files are still found; missing or trashed files are dropped at launch. Stow copies still on the shelf survive the launch cleanup. A shelf that had items reappears at launch. |
+| Saving | `Shelf.plist` in Stow's sandbox container (`~/Library/Containers/com.aaryanjigarpanchal.Stow/…/Application Support/Stow/`), rewritten on every change. Files are stored as security-scoped bookmarks, so renamed or moved files are still found and the sandbox lets Stow reopen them; missing or trashed files are dropped at launch. Stow copies still on the shelf survive the launch cleanup. A shelf that had items reappears at launch. |
+| Sandbox and files | Dropping a file gives Stow access to that file only. Rename… and Move… also change the folder the file is in, so the first time the sandbox refuses, Stow shows an Open panel asking you to allow that folder. It keeps the access for the session. Removed Stow copies stay put while they can still be restored (the sandbox can't take files back out of the Trash) and go to the Trash when a newer removal replaces them, at least 10 minutes after removal. |
 
 ## Phases
 
@@ -63,6 +64,10 @@ Drag the shelf anywhere, with the spot remembered and a Reset Shelf Position men
 ### Phase 5: Liquid Glass look ✅ built (done ahead of Phase 4)
 The shelf's background is an `NSGlassEffectView` (`ShelfViewController.makeGlassBackground()`), with 20 pt corners. Everything visible sits inside the glass view's `contentView`. While files hover over the shelf, the glass takes an accent tint.
 
+## App Store and TestFlight
+
+Everything the App Store checks is in the project: sandbox, app icon (`Stow/Assets.xcassets/AppIcon.appiconset`, original artwork), `LSApplicationCategoryType` (Productivity), `ITSAppUsesNonExemptEncryption = NO` (`Stow-Info.plist`), a privacy manifest (`Stow/PrivacyInfo.xcprivacy`) and a privacy policy (`PRIVACY.md`). `APPSTORE.md` has the steps (create the app in App Store Connect, Archive → Distribute in Xcode, TestFlight groups) and the texts to paste.
+
 ## Releases
 
 `.github/workflows/release.yml` builds a Release version of Stow for Apple Silicon and Intel, zips it, and publishes it as a GitHub Release with install steps. To publish, go to Actions → Release → Run workflow and enter a version such as `1.1`; pushing a `v1.1` tag also works. Friends download from https://github.com/aajp222/stow/releases/latest.
@@ -89,6 +94,7 @@ Bundle ID: `com.aaryanjigarpanchal.Stow`.
 | `AppSettings.swift` | Settings, stored in UserDefaults; open at login |
 | `SettingsWindow.swift` | The Settings window and its SwiftUI form |
 | `HotKey.swift` | The ⌃⌥S global shortcut |
+| `Stow.entitlements`, `Stow-Info.plist`, `Stow/PrivacyInfo.xcprivacy` | Sandbox bookmarks entitlement, extra Info.plist keys, privacy manifest |
 | `ShelfViewModel.swift` | The items; adding, removing, receiving promises |
 | `ShelfItem.swift` | The item model |
 | `PromisedFileStore.swift` | The Promised folder: create, trash, clean up |

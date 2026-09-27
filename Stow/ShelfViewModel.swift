@@ -19,8 +19,8 @@ final class ShelfViewModel {
 
     /// The items taken off the shelf most recently, for Restore Last Removed Files.
     private(set) var lastRemoved: [ShelfItem] = []
-    /// Where trashed Stow copies went in the Trash, so a restore can put them back.
-    @ObservationIgnored private var trashedCopies: [URL: URL] = [:]
+    /// When `lastRemoved` was taken off the shelf.
+    @ObservationIgnored private var lastRemovedAt = Date.distantPast
 
     @ObservationIgnored private let promisedFiles = PromisedFileStore()
 
@@ -183,38 +183,28 @@ final class ShelfViewModel {
         items[index] = items[index].relocated(to: destination, isStowCopy: items[index].isStowCopy)
     }
 
-    /// Moves items' files into `folder` and keeps the items pointing at them.
-    /// Returns a message for each file that couldn't be moved.
-    func move(_ ids: [ShelfItem.ID], to folder: URL) -> [String] {
-        var problems: [String] = []
-        for id in ids {
-            guard let index = items.firstIndex(where: { $0.id == id }), let url = items[index].fileURL else { continue }
-            let destination = folder.appending(path: url.lastPathComponent).standardizedFileURL
-            guard destination != url else { continue }
-            guard !FileManager.default.fileExists(atPath: destination.path) else {
-                problems.append(ShelfError.alreadyExists(name: url.lastPathComponent, folder: folder.lastPathComponent).localizedDescription)
-                continue
-            }
-            do {
-                try FileManager.default.moveItem(at: url, to: destination)
-                // A Stow copy moved out of Stow's folder is yours now: Stow won't trash it.
-                items[index] = items[index].relocated(to: destination, isStowCopy: promisedFiles.owns(destination))
-            } catch {
-                problems.append(error.localizedDescription)
-            }
+    /// Moves an item's file into `folder` and keeps the item pointing at it.
+    func move(_ id: ShelfItem.ID, to folder: URL) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), let url = items[index].fileURL else { return }
+        let destination = folder.appending(path: url.lastPathComponent).standardizedFileURL
+        guard destination != url else { return }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw ShelfError.alreadyExists(name: url.lastPathComponent, folder: folder.lastPathComponent)
         }
-        return problems
+        try FileManager.default.moveItem(at: url, to: destination)
+        // A Stow copy moved out of Stow's folder is yours now: Stow won't trash it.
+        items[index] = items[index].relocated(to: destination, isStowCopy: promisedFiles.owns(destination))
     }
 
     // MARK: - Removing
 
-    /// Removes items (the right-click "Remove" command). Stow's own promised copies go
-    /// to the Trash; files that live elsewhere are never touched.
+    /// Removes items (the right-click "Remove" command). Files that live elsewhere are
+    /// never touched; Stow's own copies go to the Trash once they can no longer be
+    /// restored (see rememberRemoved).
     func remove(_ ids: Set<ShelfItem.ID>) {
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
         rememberRemoved(removed)
-        trashStowCopies(of: removed, after: .zero)
     }
 
     func clear() {
@@ -237,9 +227,6 @@ final class ShelfViewModel {
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
         rememberRemoved(removed)
-        // The app it was dropped into may read the file lazily (a browser upload
-        // form, for example), so wait before moving Stow's copy to the Trash.
-        trashStowCopies(of: removed, after: .seconds(600))
     }
 
     // MARK: - Restoring
@@ -248,8 +235,7 @@ final class ShelfViewModel {
     var canRestoreLastRemoved: Bool { !lastRemoved.isEmpty }
 
     /// Puts back the items taken off the shelf most recently (by one Remove, Clear,
-    /// or drag out). Stow copies that were already trashed come back out of the
-    /// Trash. Items whose files have since been moved or deleted are skipped.
+    /// or drag out). Items whose files have since been moved or deleted are skipped.
     func restoreLastRemoved() {
         let fileManager = FileManager.default
         let onShelfIDs = Set(items.map { $0.id })
@@ -261,29 +247,27 @@ final class ShelfViewModel {
                 restored.append(item)
                 continue
             }
-            guard !onShelf.contains(url) else { continue }
-            if !fileManager.fileExists(atPath: url.path), let locationInTrash = trashedCopies[url] {
-                do {
-                    try promisedFiles.putBack(locationInTrash, at: url)
-                } catch {
-                    NSLog("Stow: couldn't restore \(url.lastPathComponent) from the Trash: \(error.localizedDescription)")
-                }
-            }
-            guard fileManager.fileExists(atPath: url.path) else { continue }
+            guard !onShelf.contains(url), fileManager.fileExists(atPath: url.path) else { continue }
             onShelf.insert(url)
             restored.append(item)
         }
         lastRemoved = []
-        trashedCopies = [:]
         items += restored
     }
 
+    /// Makes `removed` the batch Restore Last Removed Files brings back.
+    ///
+    /// Stow's own copies (screenshots, photos, saved images) stay where they are while
+    /// they can still be restored. The sandbox won't let Stow take a file back out of
+    /// the Trash, so they're only trashed once a newer removal replaces them. Even then
+    /// they get 10 minutes: an app they were dragged into may still be reading them
+    /// (a browser upload form, for example).
     private func rememberRemoved(_ removed: [ShelfItem]) {
         guard !removed.isEmpty else { return }
+        let age = Date().timeIntervalSince(lastRemovedAt)
+        trashStowCopies(of: lastRemoved, after: .seconds(max(0, 600 - age)))
         lastRemoved = removed
-        // Only the latest batch can be restored, so forget older Trash locations.
-        let urls = Set(removed.compactMap { $0.fileURL })
-        trashedCopies = trashedCopies.filter { urls.contains($0.key) }
+        lastRemovedAt = Date()
     }
 
     /// Trashes files left in Stow's folder by earlier runs, except the ones still on
@@ -301,10 +285,9 @@ final class ShelfViewModel {
                 try? await Task.sleep(for: delay)
             }
             guard let self else { return }
-            // Skip anything that was restored onto the shelf in the meantime.
-            let onShelf = Set(self.items.compactMap { $0.fileURL })
-            let trashed = self.promisedFiles.trash(urls.filter { !onShelf.contains($0) })
-            self.trashedCopies.merge(trashed) { _, new in new }
+            // Skip anything that's on the shelf again, or waiting to be restored.
+            let keep = Set((self.items + self.lastRemoved).compactMap { $0.fileURL })
+            self.promisedFiles.trash(urls.filter { !keep.contains($0) })
         }
     }
 }

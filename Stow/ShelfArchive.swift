@@ -8,6 +8,11 @@ import Observation
 /// to a file: it still finds the file after it's been renamed or moved on the same
 /// disk. When Stow loads the shelf, any file that can't be found, or that has been
 /// moved to the Trash, is left off.
+///
+/// Stow runs in the App Sandbox, so these are *security-scoped* bookmarks. A sandboxed
+/// app may only open a file you gave it (by dropping it, say). A security-scoped
+/// bookmark carries that permission across relaunches, but it only applies between
+/// `startAccessingSecurityScopedResource()` and `stopAccessingSecurityScopedResource()`.
 final class ShelfArchive {
     private struct Record: Codable {
         enum Kind: String, Codable {
@@ -25,6 +30,10 @@ final class ShelfArchive {
     private let fileURL = URL.applicationSupportDirectory.appending(path: "Stow/Shelf.plist")
     /// Bookmarks already made, by item, so saving doesn't rebuild them every time.
     private var bookmarkCache: [UUID: (url: URL, data: Data)] = [:]
+    /// Files reopened from bookmarks at launch that Stow is currently accessing, keyed
+    /// by the file's (standardized) URL, so access can be given up once they leave
+    /// the shelf.
+    private var accessedFiles: [URL: URL] = [:]
 
     func save(_ items: [ShelfItem]) {
         let records = items.compactMap(record(for:))
@@ -36,6 +45,12 @@ final class ShelfArchive {
         }
         let ids = Set(items.map { $0.id })
         bookmarkCache = bookmarkCache.filter { ids.contains($0.key) }
+
+        let onShelf = Set(items.compactMap { $0.fileURL })
+        for (url, accessed) in accessedFiles where !onShelf.contains(url) {
+            accessed.stopAccessingSecurityScopedResource()
+            accessedFiles[url] = nil
+        }
     }
 
     func load() -> [ShelfItem] {
@@ -61,7 +76,7 @@ final class ShelfArchive {
         if let cached = bookmarkCache[id], cached.url == url {
             return cached.data
         }
-        guard let data = try? url.bookmarkData() else { return nil }
+        guard let data = try? url.bookmarkData(options: .withSecurityScope) else { return nil }
         bookmarkCache[id] = (url, data)
         return data
     }
@@ -75,13 +90,24 @@ final class ShelfArchive {
             var isStale = false
             guard let resolved = try? URL(
                 resolvingBookmarkData: bookmark,
-                options: [.withoutUI, .withoutMounting],
+                options: [.withSecurityScope, .withoutUI, .withoutMounting],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             ) else { return nil }
             let url = resolved.standardizedFileURL
+            // Start using the permission the bookmark carries. Until then the sandbox
+            // won't even say whether the file exists.
+            let accessing = resolved.startAccessingSecurityScopedResource()
             let inTrash = url.pathComponents.contains(".Trash") || url.pathComponents.contains(".Trashes")
-            guard FileManager.default.fileExists(atPath: url.path), !inTrash else { return nil }
+            guard FileManager.default.fileExists(atPath: url.path), !inTrash else {
+                if accessing {
+                    resolved.stopAccessingSecurityScopedResource()
+                }
+                return nil
+            }
+            if accessing {
+                accessedFiles[url] = resolved
+            }
             if !isStale {
                 bookmarkCache[record.id] = (url, bookmark)
             }
