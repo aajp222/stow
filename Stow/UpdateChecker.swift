@@ -46,6 +46,11 @@ final class UpdateChecker {
     /// Checks quietly, at most once a day, if "Check for updates automatically" is on.
     /// A new version is announced once; after that it waits in the menu bar menu.
     func checkIfDue() {
+        #if DEBUG
+        // Builds run from Xcode say they're version 1.0, so they'd always be "out of
+        // date". Check for Updates… in the menu still works in them.
+        return
+        #else
         guard !Self.isAppStoreCopy, settings.checkForUpdates else { return }
         if let last = settings.lastUpdateCheck, Date().timeIntervalSince(last) < 24 * 60 * 60 {
             return
@@ -53,6 +58,7 @@ final class UpdateChecker {
         Task {
             await check(userInitiated: false)
         }
+        #endif
     }
 
     /// Check for Updates…: says what it found either way.
