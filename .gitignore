@@ -1,4 +1,7 @@
 .DS_Store
 build/
 DerivedData/
+# Per-user Xcode state (window layout, scheme order). Xcode rewrites these
+# constantly, so they'd block every `git pull`.
+xcuserdata/
 *.xcuserstate
