@@ -23,6 +23,9 @@ final class ShelfPanelController {
     /// Bumped on every show and hide, so a hide animation that finishes late doesn't
     /// remove a panel that was shown again in the meantime.
     private var animationGeneration = 0
+    /// Bumped for every drag, so a hide check scheduled at the end of one drag can
+    /// tell that another drag has started since.
+    private var dragGeneration = 0
     private var screenObserver: NSObjectProtocol?
 
     /// How far the shelf slides while it fades in or out.
@@ -33,6 +36,7 @@ final class ShelfPanelController {
         viewController = ShelfViewController(viewModel: viewModel)
         viewController.onHide = { [weak self] in self?.hide() }
         viewController.onContentChanged = { [weak self] in self?.contentChanged() }
+        viewController.onDragOutEnded = { [weak self] in self?.dragEnded() }
         panel.contentView = viewController.view
 
         // Displays plugged in, unplugged or rearranged: re-dock so the shelf isn't
@@ -45,9 +49,6 @@ final class ShelfPanelController {
             MainActor.assumeIsolated { self?.screensChanged() }
         }
     }
-
-    /// True while the user is dragging items out of the shelf.
-    var isDraggingOut: Bool { viewController.isDraggingOut }
 
     // MARK: - Showing and hiding
 
@@ -111,6 +112,43 @@ final class ShelfPanelController {
                 self.panel.orderOut(nil)
             }
         })
+    }
+
+    // MARK: - Following drags
+
+    /// A file drag started somewhere on the Mac. Bring the shelf to the display the
+    /// pointer is on, at whichever side is nearer. If it's already there, it stays put.
+    func fileDragBegan(at point: NSPoint) {
+        dragGeneration += 1
+        let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        let edge: ShelfEdge = point.x < screen.visibleFrame.midX ? .left : .right
+        show(on: screen, edge: edge)
+    }
+
+    /// A drag ended: a file drag the monitor was following, or items dragged out of
+    /// the shelf. If the shelf ends up empty, hide it.
+    func dragEnded() {
+        dragGeneration += 1
+        let generation = dragGeneration
+        Task { [weak self] in
+            // The drop onto the shelf and the mouse-up can arrive in either order, so
+            // give a drop a moment to land before deciding the shelf is empty.
+            try? await Task.sleep(for: .milliseconds(300))
+            await self?.hideIfEmpty(afterDrag: generation)
+        }
+    }
+
+    private func hideIfEmpty(afterDrag generation: Int) async {
+        // Promised files are written by the source app after the drop, which can
+        // take a while for big files. Wait for them, but give up after 10 seconds.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while viewModel.isReceivingPromises, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        // Leave the shelf alone if a new drag has started since this one ended.
+        guard generation == dragGeneration, viewModel.items.isEmpty else { return }
+        hide()
     }
 
     // MARK: - Layout

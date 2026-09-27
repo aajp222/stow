@@ -24,6 +24,7 @@ struct StowMain {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let viewModel = ShelfViewModel()
     private lazy var shelf = ShelfPanelController(viewModel: viewModel)
+    private let dragMonitor = DragMonitor()
 
     private var statusItem: NSStatusItem?
     private var toggleShelfItem: NSMenuItem?
@@ -32,6 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel.trashLeftoverPromisedFiles()
         setUpStatusItem()
+
+        dragMonitor.onFileDragBegan = { [weak self] point in self?.shelf.fileDragBegan(at: point) }
+        dragMonitor.onFileDragEnded = { [weak self] in self?.shelf.dragEnded() }
+        dragMonitor.start()
     }
 
     // MARK: - Menu bar

@@ -33,9 +33,6 @@ final class ShelfViewController: NSViewController {
     /// A drag out of the shelf finished (dropped or cancelled).
     var onDragOutEnded: () -> Void = {}
 
-    /// True while the user is dragging items out of the shelf.
-    private(set) var isDraggingOut = false
-
     private let dropView = ShelfDropView()
     private let collectionView = ShelfCollectionView()
     private let scrollView = NSScrollView()
@@ -238,7 +235,7 @@ final class ShelfViewController: NSViewController {
         withObservationTracking {
             _ = viewModel.items
         } onChange: { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.reload()
                 self?.observeItems()
             }
@@ -330,14 +327,12 @@ extension ShelfViewController: NSCollectionViewDelegateFlowLayout {
     }
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
-        isDraggingOut = true
         draggedItemIDs = indexPaths.map { displayedItems[$0.item].id }
     }
 
     /// `operation` is what the drop target did with the items, or empty if the drag
     /// was cancelled or refused. Only a successful drop removes anything.
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation operation: NSDragOperation) {
-        isDraggingOut = false
         viewModel.finishDragOut(of: draggedItemIDs, operation: operation)
         draggedItemIDs = []
         onDragOutEnded()

@@ -71,7 +71,7 @@ final class ShelfViewModel {
             // The reader block runs on `promiseQueue`, not the main thread, so it's
             // marked @Sendable and hops back to the main actor before touching `items`.
             promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: promiseQueue) { @Sendable [weak self] fileURL, error in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.promisedFileArrived(fileURL, error: error, drop: drop)
                 }
             }
