@@ -4,9 +4,19 @@
 # To publish a new version: GitHub > Actions > Release > Run workflow, and type a
 # version number such as 1.1. (Pushing a tag such as v1.1 works too.)
 #
-# The app is signed "ad hoc" rather than with a paid Apple Developer ID, so on
-# another Mac the first launch has to be allowed once in System Settings >
-# Privacy & Security > Open Anyway. The release notes below explain that.
+# Signing:
+# - With the five secrets below set (repo Settings > Secrets and variables >
+#   Actions), the app is signed with your Developer ID and notarized by Apple, so
+#   it opens on any Mac like any other downloaded app.
+# - Without them, it's signed "ad hoc" and macOS warns on first launch
+#   ("Apple could not verify Stow is free of malware").
+#
+#   DEVELOPER_ID_CERT_P12_BASE64  your "Developer ID Application" certificate and
+#                                 private key, exported as .p12, base64-encoded
+#   DEVELOPER_ID_CERT_PASSWORD    the password you gave the .p12 when exporting
+#   NOTARY_APPLE_ID               the Apple ID email of your developer account
+#   NOTARY_APP_PASSWORD           an app-specific password for that Apple ID
+#   NOTARY_TEAM_ID                your 10-character Team ID
 name: Release
 
 on:
@@ -44,18 +54,96 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           xcodebuild -version
 
-      - name: Build Stow.app
+      - name: Import the Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
-          # Release build for both Apple Silicon and Intel Macs, signed ad hoc
-          # (CODE_SIGN_IDENTITY "-", Xcode's "Sign to Run Locally").
+          if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ] || [ -z "$NOTARY_APPLE_ID" ] \
+             || [ -z "$NOTARY_APP_PASSWORD" ] || [ -z "$NOTARY_TEAM_ID" ]; then
+            echo "::warning::Developer ID secrets aren't all set, so this release is signed ad hoc and macOS will warn on first launch."
+            echo "NOTARIZE=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # A throwaway keychain that exists only for this run.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/developer-id.p12"
+          # Let codesign use the key without a password prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "NOTARIZE=1" >> "$GITHUB_ENV"
+
+      - name: Build Stow.app
+        env:
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          # Release build for both Apple Silicon and Intel Macs.
+          if [ "$NOTARIZE" = 1 ]; then
+            # Developer ID signing. Notarization also needs the hardened runtime and
+            # a secure timestamp, and no debugging entitlement.
+            SIGNING=(
+              CODE_SIGN_STYLE=Manual
+              CODE_SIGN_IDENTITY="Developer ID Application"
+              DEVELOPMENT_TEAM="$NOTARY_TEAM_ID"
+              ENABLE_HARDENED_RUNTIME=YES
+              CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+              OTHER_CODE_SIGN_FLAGS="--timestamp --keychain $KEYCHAIN"
+            )
+          else
+            # Ad hoc signing (Xcode's "Sign to Run Locally").
+            SIGNING=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=)
+          fi
           xcodebuild -project Stow.xcodeproj -target Stow -configuration Release \
             SYMROOT="$PWD/build" \
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            "${SIGNING[@]}" \
             -quiet build
           codesign --verify --deep --strict --verbose=2 build/Release/Stow.app
+          codesign -dv build/Release/Stow.app 2>&1 | grep -E "^(Identifier|Authority|Signature|TeamIdentifier|Runtime)"
           lipo -archs build/Release/Stow.app/Contents/MacOS/Stow
+
+      - name: Notarize with Apple
+        if: env.NOTARIZE == '1'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          # Upload to Apple's notary service and wait for its verdict (usually a
+          # few minutes).
+          ditto -c -k --keepParent build/Release/Stow.app notarize.zip
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_APP_PASSWORD" --team-id "$NOTARY_TEAM_ID" \
+            --wait --timeout 30m --output-format json > notary.json || true
+          cat notary.json
+          STATUS="$(plutil -extract status raw notary.json 2>/dev/null || echo unknown)"
+          if [ "$STATUS" != "Accepted" ]; then
+            ID="$(plutil -extract id raw notary.json 2>/dev/null || true)"
+            if [ -n "$ID" ]; then
+              xcrun notarytool log "$ID" \
+                --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_APP_PASSWORD" --team-id "$NOTARY_TEAM_ID" || true
+            fi
+            echo "::error::Apple didn't notarize the app (status: $STATUS). The log above says why."
+            exit 1
+          fi
+          # Attach Apple's approval to the app itself, so it opens even offline.
+          xcrun stapler staple build/Release/Stow.app
+          spctl --assess --type execute --verbose=4 build/Release/Stow.app
+
+      - name: Zip Stow.app
+        run: |
           # ditto keeps the app bundle's signature and metadata intact in the zip.
           ditto -c -k --keepParent build/Release/Stow.app Stow.zip
 
@@ -63,26 +151,52 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > notes.md <<'EOF'
+          if [ "$NOTARIZE" = 1 ]; then
+            cat > notes.md <<'EOF'
           ## Install
 
           1. Download **Stow.zip** below and open it.
           2. Drag **Stow** into your **Applications** folder.
-          3. Open Stow. macOS says it can't check Stow for malware: click **Done**.
-          4. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Stow. Confirm with your password or Touch ID.
-          5. A tray icon appears in the menu bar. Stow has no Dock icon and no window: pick up any file and the shelf slides in. Settings are in the tray icon's menu.
+          3. Open Stow. macOS asks whether to open an app downloaded from the internet: click **Open**.
+          4. A tray icon appears in the menu bar. Stow has no Dock icon and no window: pick up any file and the shelf slides in. Settings are in the tray icon's menu.
 
           Needs **macOS 26 (Tahoe) or later**.
 
           ## Updating
 
           Quit Stow (tray icon → Quit Stow), then replace it in Applications with the new download.
-
-          ## Why the warning?
-
-          Stow isn't signed with a paid Apple Developer ID, so macOS can't confirm who made it. Allowing it once in Privacy & Security is enough.
           EOF
+          else
+            cat > notes.md <<'EOF'
+          ## Install
+
+          1. Download **Stow.zip** below and open it.
+          2. Drag **Stow** into your **Applications** folder.
+          3. Open **Terminal** and run this once, then open Stow:
+
+             ```
+             xattr -dr com.apple.quarantine /Applications/Stow.app
+             ```
+
+             (Or open Stow, click **Done** on the warning, then go to **System Settings → Privacy & Security** and click **Open Anyway**.)
+          4. A tray icon appears in the menu bar. Stow has no Dock icon and no window: pick up any file and the shelf slides in. Settings are in the tray icon's menu.
+
+          Needs **macOS 26 (Tahoe) or later**.
+
+          ## Updating
+
+          Quit Stow (tray icon → Quit Stow), then replace it in Applications with the new download and repeat step 3.
+
+          ## Why the extra step?
+
+          This build isn't notarized by Apple, so macOS warns that it can't check it for malware. Step 3 tells macOS you trust it.
+          EOF
+          fi
           gh release create "v$VERSION" Stow.zip \
             --target "$GITHUB_SHA" \
             --title "Stow $VERSION" \
             --notes-file notes.md
+
+      - name: Remove the temporary keychain
+        if: always() && env.KEYCHAIN != ''
+        run: security delete-keychain "$KEYCHAIN" || true
