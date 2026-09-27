@@ -67,7 +67,10 @@ The shelf's background is an `NSGlassEffectView` (`ShelfViewController.makeGlass
 
 `.github/workflows/release.yml` builds a Release version of Stow for Apple Silicon and Intel, zips it, and publishes it as a GitHub Release with install steps. To publish, go to Actions → Release → Run workflow and enter a version such as `1.1`; pushing a `v1.1` tag also works. Friends download from https://github.com/aajp222/stow/releases/latest.
 
-The app is signed ad hoc, not with a paid Developer ID, so on another Mac the first launch must be allowed once in System Settings → Privacy & Security → Open Anyway. Removing that step would take the Apple Developer Program: a Developer ID signature plus notarization.
+- **With the five Developer ID secrets set** (repo Settings → Secrets and variables → Actions; the names are listed at the top of `release.yml`), the app is signed with the Developer ID certificate. It uses the hardened runtime and a secure timestamp, is notarized with `notarytool`, and has the approval stapled to it. It then opens on any Mac with just macOS's normal "downloaded from the internet" prompt.
+- **Without them**, it's signed ad hoc and macOS warns that it can't check it for malware. The release notes then tell people to run `xattr -dr com.apple.quarantine /Applications/Stow.app` once, or to use Privacy & Security → Open Anyway.
+
+Bundle ID: `com.aaryanjigarpanchal.Stow`.
 
 ## Code map
 
