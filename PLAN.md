@@ -32,7 +32,7 @@ Menu bar icon (`tray`) with Show Shelf, Clear Shelf and Quit. No Dock icon, no w
 
 ### Phase 2: The shelf ✅ built
 - Non-activating floating `NSPanel` on every Space and over full-screen apps. It never takes focus.
-- Translucent rounded background, 120 pt wide.
+- Rounded background, 120 pt wide (Liquid Glass since Phase 5).
 - `NSCollectionView` with a SwiftUI item view in each cell.
 - Drop files and folders (stored as references) or file promises (screenshot thumbnails, Photos, Mail).
 - Quick Look thumbnails and filenames.
@@ -53,8 +53,8 @@ Global and local mouse monitors plus the drag pasteboard check above. The shelf 
   - Preferred edge: Left / Right / Nearest to pointer.
   - Only appear when the pointer nears a screen edge.
 
-### Phase 5: Liquid Glass look
-Replace the `NSVisualEffectView` background with `NSGlassEffectView`, in one place: `ShelfViewController.makeBackground()`. Then restyle the header and cells to match.
+### Phase 5: Liquid Glass look ✅ built (done ahead of Phase 4)
+The shelf's background is an `NSGlassEffectView` (`ShelfViewController.makeGlassBackground()`), with 20 pt corners. Everything visible sits inside the glass view's `contentView`. While files hover over the shelf, the glass takes an accent tint.
 
 ## Code map
 

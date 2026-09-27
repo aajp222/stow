@@ -25,7 +25,7 @@ struct ShelfItemView: View {
         .padding(6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(isSelected ? Color.accentColor.opacity(0.28) : Color.clear)
         }
     }

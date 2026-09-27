@@ -4,7 +4,7 @@ import Observation
 /// Sizes shared by the shelf's view and the panel that holds it.
 enum ShelfLayout {
     static let width: CGFloat = 120
-    static let cornerRadius: CGFloat = 16
+    static let cornerRadius: CGFloat = 20
     /// Gap between the shelf and the screen edge it's docked to.
     static let screenMargin: CGFloat = 8
     static let headerHeight: CGFloat = 28
@@ -34,6 +34,8 @@ final class ShelfViewController: NSViewController {
     var onDragOutEnded: () -> Void = {}
 
     private let dropView = ShelfDropView()
+    /// Liquid Glass background. Everything visible sits inside its `contentView`.
+    private let glassView = NSGlassEffectView()
     private let collectionView = ShelfCollectionView()
     private let scrollView = NSScrollView()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -67,43 +69,52 @@ final class ShelfViewController: NSViewController {
             self?.viewModel.receive(promises)
         }
         dropView.onTargetedChange = { [weak self] isTargeted in
-            self?.highlightView.isHidden = !isTargeted
+            self?.setDropTargeted(isTargeted)
         }
 
-        let background = makeBackground()
+        let content = makeGlassBackground()
         let hideButton = makeHideButton()
         configureTitleLabel()
         configureCollectionView()
         configureEmptyState()
         configureHighlight()
 
-        for subview in [background, titleLabel, hideButton, scrollView, emptyState, highlightView] {
+        for subview in [glassView, highlightView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             dropView.addSubview(subview)
         }
+        for subview in [titleLabel, hideButton, scrollView, emptyState] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(subview)
+        }
         NSLayoutConstraint.activate([
-            background.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
-            background.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
-            background.topAnchor.constraint(equalTo: dropView.topAnchor),
-            background.bottomAnchor.constraint(equalTo: dropView.bottomAnchor),
+            glassView.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: dropView.topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: dropView.bottomAnchor),
 
-            hideButton.topAnchor.constraint(equalTo: dropView.topAnchor, constant: 6),
-            hideButton.trailingAnchor.constraint(equalTo: dropView.trailingAnchor, constant: -6),
+            content.leadingAnchor.constraint(equalTo: glassView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: glassView.trailingAnchor),
+            content.topAnchor.constraint(equalTo: glassView.topAnchor),
+            content.bottomAnchor.constraint(equalTo: glassView.bottomAnchor),
+
+            hideButton.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
+            hideButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
             hideButton.widthAnchor.constraint(equalToConstant: 18),
             hideButton.heightAnchor.constraint(equalToConstant: 18),
 
-            titleLabel.leadingAnchor.constraint(equalTo: dropView.leadingAnchor, constant: 12),
+            titleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
             titleLabel.centerYAnchor.constraint(equalTo: hideButton.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: hideButton.leadingAnchor, constant: -4),
 
-            scrollView.topAnchor.constraint(equalTo: dropView.topAnchor, constant: ShelfLayout.headerHeight),
-            scrollView.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: dropView.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: content.topAnchor, constant: ShelfLayout.headerHeight),
+            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
             emptyState.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyState.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: -6),
-            emptyState.widthAnchor.constraint(lessThanOrEqualTo: dropView.widthAnchor, constant: -20),
+            emptyState.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor, constant: -20),
 
             highlightView.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
             highlightView.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
@@ -120,34 +131,26 @@ final class ShelfViewController: NSViewController {
         observeItems()
     }
 
-    /// The translucent rounded background. This is the one place to change when the
-    /// shelf moves to Liquid Glass.
-    private func makeBackground() -> NSView {
-        let background = NSVisualEffectView()
-        background.material = .popover
-        // Blur whatever is behind the window (the desktop, other apps).
-        background.blendingMode = .behindWindow
-        // Visual effect views normally go flat when their window isn't in the active
-        // app. Stow is never the active app, so keep the blur on all the time.
-        background.state = .active
-        // A layer corner radius doesn't clip a behind-window blur. A mask image does,
-        // and the window's shadow follows the mask's shape too.
-        background.maskImage = Self.roundedMask(radius: ShelfLayout.cornerRadius)
-        return background
+    /// Sets up the Liquid Glass background (macOS 26's `NSGlassEffectView`) and
+    /// returns the view the shelf's controls go in.
+    ///
+    /// The glass refracts and tints whatever is behind the window, and adapts its
+    /// own brightness so the content on top stays readable. Only views inside its
+    /// `contentView` are guaranteed to get that treatment, so everything visible goes
+    /// in there instead of being layered on top.
+    private func makeGlassBackground() -> NSView {
+        glassView.cornerRadius = ShelfLayout.cornerRadius
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        glassView.contentView = content
+        return content
     }
 
-    /// A small stretchable rounded-rectangle image: `capInsets` keep the corners
-    /// fixed while the middle stretches to whatever size the view is.
-    private static func roundedMask(radius: CGFloat) -> NSImage {
-        let side = radius * 2 + 1
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
-        image.resizingMode = .stretch
-        return image
+    /// While files hover over the shelf: tint the glass with the accent colour and
+    /// show an outline.
+    private func setDropTargeted(_ isTargeted: Bool) {
+        glassView.tintColor = isTargeted ? NSColor.controlAccentColor.withAlphaComponent(0.25) : nil
+        highlightView.isHidden = !isTargeted
     }
 
     private func makeHideButton() -> NSButton {
