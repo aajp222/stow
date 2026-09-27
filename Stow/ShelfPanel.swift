@@ -50,8 +50,9 @@ final class ShelfPanel: NSPanel {
     // moving the window on its own; moving it from code still works.
 
     /// A borderless window normally can't become the key window (the one that gets
-    /// keystrokes). The shelf needs to for Space (Quick Look) and Delete. Because it's
-    /// a non-activating panel, becoming key doesn't make Stow the active app.
+    /// keystrokes). The shelf needs to for its keyboard shortcuts (arrow keys, Space
+    /// for Quick Look, Return, Delete, typing to filter). Because it's a
+    /// non-activating panel, becoming key doesn't make Stow the active app.
     override var canBecomeKey: Bool {
         true
     }
@@ -77,5 +78,21 @@ extension NSWindow {
             setFrameOrigin(NSPoint(x: origin.x + dx, y: origin.y + dy))
         }
         return moved
+    }
+
+    /// After a mouse-down, waits to see whether the mouse is dragged or just clicked.
+    /// Returns the drag event once the pointer has moved a few points with the button
+    /// held, or nil if the button comes back up first. Like followMouseDrag, it takes
+    /// the events straight off the queue.
+    func waitForDrag(after mouseDown: NSEvent) -> NSEvent? {
+        let start = mouseDown.locationInWindow
+        while let event = nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            guard event.type == .leftMouseDragged else { return nil }
+            let point = event.locationInWindow
+            if abs(point.x - start.x) >= 3 || abs(point.y - start.y) >= 3 {
+                return event
+            }
+        }
+        return nil
     }
 }

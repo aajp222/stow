@@ -56,7 +56,7 @@ struct SettingsView: View {
                     Text(error)
                         .foregroundStyle(.red)
                 }
-                LabeledContent("Show or hide the shelf", value: "⌃⌥S")
+                Toggle("Show the number of items in the menu bar", isOn: $settings.showCountInMenuBar)
             } header: {
                 Text("General")
             } footer: {
@@ -64,7 +64,32 @@ struct SettingsView: View {
             }
 
             Section {
+                LabeledContent("Show or hide the shelf") {
+                    HStack {
+                        if settings.shortcut != KeyCombo.default, !settings.isRecordingShortcut {
+                            Button("Use ⌃⌥S") {
+                                settings.shortcut = KeyCombo.default
+                            }
+                            .buttonStyle(.link)
+                        }
+                        ShortcutRecorder(shortcut: settings.shortcut, settings: settings)
+                            .frame(minWidth: 110)
+                            .fixedSize()
+                    }
+                }
+                if let problem = settings.shortcutProblem {
+                    Text(problem)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Keyboard")
+            } footer: {
+                Text("Click the shortcut, then press the keys you want. Delete turns it off. On the shelf, use the arrow keys, Space to preview, Return to open, ⌘C to copy, and type a name to filter.")
+            }
+
+            Section {
                 Toggle("Remove items after dragging them out", isOn: $settings.removeAfterDrag)
+                Toggle("Stack files dropped together", isOn: $settings.stackDroppedFiles)
                 Stepper(value: $settings.visibleItemLimit, in: AppSettings.visibleItemRange) {
                     LabeledContent("Items shown before scrolling", value: "\(settings.visibleItemLimit)")
                 }
@@ -77,7 +102,7 @@ struct SettingsView: View {
             } header: {
                 Text("Shelf")
             } footer: {
-                Text("Drag the shelf by an empty spot to put it anywhere. Reset Shelf Position in the menu bar docks it again.")
+                Text("Drag the shelf by an empty spot to put it anywhere. Reset Shelf Position in the menu bar docks it again. Drag an item away from the shelf and let go where nothing takes it to remove it.")
             }
         }
         .formStyle(.grouped)

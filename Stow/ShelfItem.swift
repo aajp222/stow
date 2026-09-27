@@ -22,17 +22,21 @@ struct ShelfItem: Identifiable, Equatable {
     /// file promise (a screenshot thumbnail, a Photos drag, a Mail attachment...) or
     /// was made from an image. Stow is responsible for cleaning those up.
     let isStowCopy: Bool
+    /// Items that share a stack ID show as one pile on the shelf (see ShelfRow). Files
+    /// dropped together get one, and so do items gathered with Stack Items.
+    var stackID: UUID?
 
-    init(id: UUID = UUID(), content: Content, isStowCopy: Bool = false) {
+    init(id: UUID = UUID(), content: Content, isStowCopy: Bool = false, stackID: UUID? = nil) {
         self.id = id
         self.content = content
         self.isStowCopy = isStowCopy
+        self.stackID = stackID
     }
 
-    /// The same item (same id, so it keeps its place and selection) pointing at the
-    /// file's new location after a rename or move.
+    /// The same item (same id, so it keeps its place, stack and selection) pointing at
+    /// the file's new location after a rename or move.
     func relocated(to url: URL, isStowCopy: Bool) -> ShelfItem {
-        ShelfItem(id: id, content: .file(url), isStowCopy: isStowCopy)
+        ShelfItem(id: id, content: .file(url), isStowCopy: isStowCopy, stackID: stackID)
     }
 
     var fileURL: URL? {
@@ -59,6 +63,19 @@ struct ShelfItem: Identifiable, Equatable {
         case .file(let url): url as NSURL
         case .text(let text): text as NSString
         case .link(let url, _): url as NSURL
+        }
+    }
+
+    /// What kind of thing this is, for VoiceOver: the file's type as Finder names it
+    /// ("PDF document", "Folder"...), "Text" or "Link".
+    var kindDescription: String {
+        switch content {
+        case .file(let url):
+            (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey]))?.localizedTypeDescription ?? "File"
+        case .text:
+            "Text"
+        case .link:
+            "Link"
         }
     }
 
