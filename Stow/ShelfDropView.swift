@@ -7,12 +7,16 @@ final class ShelfDropView: NSView {
     /// file URLs. Some apps still do.
     static let legacyFilenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
 
-    /// Every pasteboard type that can carry files: file URLs (modern and legacy),
-    /// plus all the types a file promise can arrive as. A plain `public.url` can hold
-    /// a file URL too, but it's often a web link, so `carriesFiles` checks those.
-    static let acceptedTypes: [NSPasteboard.PasteboardType] =
-        [.fileURL, legacyFilenamesType, .URL]
+    /// Pasteboard types that on their own mean "this drag carries files": file URLs
+    /// (modern and legacy), plus all the types a file promise can arrive as.
+    static let fileTypes: Set<NSPasteboard.PasteboardType> = Set(
+        [.fileURL, legacyFilenamesType]
         + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+    )
+
+    /// Everything the drop target listens for. A plain `public.url` can hold a file
+    /// URL too, but it's often a web link, so `carriesFiles` looks inside those.
+    static let acceptedTypes: [NSPasteboard.PasteboardType] = Array(fileTypes) + [.URL]
 
     /// What to turn each dragged item into, in order of preference. A promise wins
     /// when an item offers both: the URL alongside a promise can point at a temporary
@@ -21,9 +25,21 @@ final class ShelfDropView: NSView {
     /// Only accept `file://` URLs, not web links (those come in Phase 4).
     private static let readingOptions: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
 
-    /// Whether a drag carries anything the shelf can take: files, folders or file
-    /// promises. DragMonitor uses this too, so the shelf only pops up for drags it
-    /// can actually accept.
+    /// Whether a drag carries files, judged from the pasteboard's list of *types*
+    /// alone, without reading any data. DragMonitor uses this.
+    ///
+    /// DragMonitor looks at the drag pasteboard while another app owns the drag. Since
+    /// macOS 26, reading pasteboard *data* when the user isn't pasting or dropping it
+    /// is blocked (or makes macOS ask "Allow Stow to paste?"). Listing the types is
+    /// still allowed.
+    static func offersFileTypes(_ pasteboard: NSPasteboard) -> Bool {
+        guard let types = pasteboard.types else { return false }
+        return !fileTypes.isDisjoint(with: types)
+    }
+
+    /// Whether a drag over the shelf carries anything it can take: files, folders or
+    /// file promises. This one may look inside the data, which is allowed here
+    /// because the user is dragging onto Stow.
     static func carriesFiles(_ pasteboard: NSPasteboard) -> Bool {
         guard let types = pasteboard.types else { return false }
         if types.contains(legacyFilenamesType) { return true }
