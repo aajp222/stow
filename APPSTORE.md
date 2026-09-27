@@ -16,7 +16,7 @@ The project is already set up for the App Store: App Sandbox, app icon, category
 ## 2. Upload a build from Xcode (each time)
 
 1. Pull the latest `main` and open `Stow.xcodeproj`.
-2. Select the **Stow** target, then **Signing & Capabilities**. Check **Automatically manage signing** and choose your paid team.
+2. Select the **Stow** target, then **Signing & Capabilities**. Check **Automatically manage signing** and choose your paid team. Do the same for the **StowShare** target (the Share menu extension). Xcode registers its bundle ID and the App Group they share by itself.
 3. In the toolbar's destination menu, choose **Any Mac (Apple Silicon, Intel)**.
 4. Choose **Product → Archive**. When it's done, the Organizer window opens.
 5. Click **Distribute App** → **App Store Connect** (or "TestFlight & App Store") → **Distribute**.
@@ -46,9 +46,11 @@ The project is already set up for the App Store: App Sandbox, app icon, category
 > 4. Drag items up and down the shelf to reorder them. Click the ✕ on an item to remove it, or drag it far from the shelf and let go.
 > 5. Right-click items and try Open, Open With, Share, Rename, Move, Copy, Show in Finder, Stack Items, Unstack, Remove and Restore Last Removed Files.
 > 6. Click an item, then try the arrow keys, Space (Quick Look), Return (open), ⌘C, and typing part of a name to filter.
-> 7. Press ⌃⌥S to show or hide the shelf. Drag the shelf by its header to move it.
-> 8. Quit and reopen Stow; your items and stacks should still be there.
-> 9. Tray icon → Settings…: try the options, including picking your own shortcut.
+> 7. Right-click → Quick Actions: zip files, convert or shrink images, or combine images and PDFs into one PDF. Try Pin, and Rename Stack… on a stack.
+> 8. In any app's Share menu (Finder, Safari, Photos…), choose Stow. It may first need turning on in System Settings → General → Login Items & Extensions → Sharing.
+> 9. Settings: turn on "Add new screenshots to the shelf", then take a screenshot. Try "Show the shelf: When you shake the pointer while dragging".
+> 10. Press ⌃⌥S to show or hide the shelf. Drag the shelf by its header to move it.
+> 11. Quit and reopen Stow; your items, stacks and pins should still be there.
 >
 > Tell me about anything that doesn't show up when it should, looks wrong, or is confusing.
 
