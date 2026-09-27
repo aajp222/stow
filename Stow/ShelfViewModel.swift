@@ -7,9 +7,7 @@ import Observation
 final class ShelfViewModel {
     private(set) var items: [ShelfItem] = []
 
-    /// Remove items once they've been dragged out and dropped somewhere.
-    /// Phase 4 moves this into the Settings window.
-    var removeAfterDrag = true
+    @ObservationIgnored private let settings: AppSettings
 
     /// File promises that were dropped on the shelf but whose files haven't been
     /// written yet, keyed by drop, with how many files each drop is still waiting for.
@@ -33,7 +31,54 @@ final class ShelfViewModel {
         return queue
     }()
 
+    init(settings: AppSettings) {
+        self.settings = settings
+    }
+
     // MARK: - Adding
+
+    /// Puts back the shelf saved at the last quit (see ShelfArchive).
+    func loadSaved(_ saved: [ShelfItem]) {
+        items = saved
+    }
+
+    /// Adds whatever was dropped or pasted. Files are added as references, file
+    /// promises are received, links and text become items of their own, and images
+    /// are saved as PNG files in Stow's folder.
+    func add(_ incoming: [IncomingItem]) {
+        var files: [URL] = []
+        var promises: [NSFilePromiseReceiver] = []
+        var newItems: [ShelfItem] = []
+        var links = Set(items.compactMap { item -> URL? in
+            if case .link(let url, _) = item.content { url } else { nil }
+        })
+        var texts = Set(items.compactMap { item -> String? in
+            if case .text(let text) = item.content { text } else { nil }
+        })
+        for thing in incoming {
+            switch thing {
+            case .file(let url):
+                files.append(url)
+            case .promise(let promise):
+                promises.append(promise)
+            case .link(let url, let title):
+                if links.insert(url).inserted {
+                    newItems.append(ShelfItem(content: .link(url, title: title)))
+                }
+            case .text(let text):
+                if texts.insert(text).inserted {
+                    newItems.append(ShelfItem(content: .text(text)))
+                }
+            case .image(let png):
+                if let item = saveImage(png) {
+                    newItems.append(item)
+                }
+            }
+        }
+        addFiles(files)
+        receive(promises)
+        items += newItems
+    }
 
     /// Adds references to files and folders. Anything already on the shelf is skipped.
     func addFiles(_ urls: [URL]) {
@@ -94,40 +139,26 @@ final class ShelfViewModel {
         items.append(ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true))
     }
 
-    /// "Add Clipboard Contents to Stow". Files on the clipboard are added as
-    /// references, like a drop. Anything else (an image, a link, some text) is saved as
-    /// a new file in Stow's own folder, so it can be dragged anywhere a file can.
-    /// Returns false if there was nothing usable on the clipboard.
+    /// "Add Clipboard Contents to Stow": adds whatever is on the clipboard, the same
+    /// way as a drop. Returns false if there was nothing usable on it.
     @discardableResult
     func addClipboardContents() -> Bool {
-        switch ClipboardContents.read() {
-        case .files(let urls):
-            addFiles(urls)
-            return true
-        case .image(let png):
-            return addStowFile(named: "Clipboard Image.png", data: png)
-        case .link(let url):
-            let webloc = try? PropertyListSerialization.data(
-                fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0
-            )
-            guard let webloc else { return false }
-            return addStowFile(named: ClipboardContents.fileName(for: url.host() ?? "Link") + ".webloc", data: webloc)
-        case .text(let text):
-            return addStowFile(named: ClipboardContents.fileName(for: text) + ".txt", data: Data(text.utf8))
-        case nil:
-            return false
-        }
+        let incoming = PasteboardContents.read(from: .general)
+        guard !incoming.isEmpty else { return false }
+        add(incoming)
+        return true
     }
 
-    private func addStowFile(named name: String, data: Data) -> Bool {
+    /// Saves an image that isn't a file yet (image data from a drag or the clipboard)
+    /// as a PNG in Stow's folder, so it can be dragged out anywhere a file can.
+    private func saveImage(_ png: Data) -> ShelfItem? {
         do {
-            let url = try promisedFiles.makeDropFolder().appending(path: name)
-            try data.write(to: url)
-            items.append(ShelfItem(content: .file(url.standardizedFileURL), isStowCopy: true))
-            return true
+            let url = try promisedFiles.makeDropFolder().appending(path: "Image.png")
+            try png.write(to: url)
+            return ShelfItem(content: .file(url.standardizedFileURL), isStowCopy: true)
         } catch {
-            NSLog("Stow: couldn't save the clipboard contents: \(error.localizedDescription)")
-            return false
+            NSLog("Stow: couldn't save an image: \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -200,7 +231,7 @@ final class ShelfViewModel {
         // After a move the file is no longer where our reference points, so the item
         // has to go whatever the setting says.
         let moved = !operation.isDisjoint(with: [.move, .generic])
-        guard moved || removeAfterDrag else { return }
+        guard moved || settings.removeAfterDrag else { return }
 
         let ids = Set(ids)
         let removed = items.filter { ids.contains($0.id) }
@@ -221,10 +252,16 @@ final class ShelfViewModel {
     /// Trash. Items whose files have since been moved or deleted are skipped.
     func restoreLastRemoved() {
         let fileManager = FileManager.default
+        let onShelfIDs = Set(items.map { $0.id })
         var onShelf = Set(items.compactMap { $0.fileURL })
         var restored: [ShelfItem] = []
-        for item in lastRemoved {
-            guard let url = item.fileURL, !onShelf.contains(url) else { continue }
+        for item in lastRemoved where !onShelfIDs.contains(item.id) {
+            // Text and links have no file to check.
+            guard let url = item.fileURL else {
+                restored.append(item)
+                continue
+            }
+            guard !onShelf.contains(url) else { continue }
             if !fileManager.fileExists(atPath: url.path), let locationInTrash = trashedCopies[url] {
                 do {
                     try promisedFiles.putBack(locationInTrash, at: url)
@@ -249,10 +286,11 @@ final class ShelfViewModel {
         trashedCopies = trashedCopies.filter { urls.contains($0.key) }
     }
 
-    /// Trashes files left in the Promised folder by earlier runs. Nothing is saved
-    /// across launches yet (that's Phase 4), so at launch every one of them is an orphan.
+    /// Trashes files left in Stow's folder by earlier runs, except the ones still on
+    /// the (just loaded) shelf.
     func trashLeftoverPromisedFiles() {
-        promisedFiles.trashAll()
+        let stillOnShelf = Set(items.filter { $0.isStowCopy }.compactMap { $0.fileURL })
+        promisedFiles.trashAll(except: stillOnShelf)
     }
 
     private func trashStowCopies(of removed: [ShelfItem], after delay: Duration) {

@@ -1,17 +1,24 @@
 import AppKit
 
-/// Notices when you pick up files in any app (so the shelf can slide in) and when
-/// you let go of them.
+/// Notices when you pick something up in any app (files, photos, text, a link) so
+/// the shelf can slide in, and when you let go of it.
 ///
 /// Permissions: none. Watching *mouse* events in other apps with a global monitor
 /// doesn't need Accessibility access; only watching the keyboard would. Global
 /// monitors can only observe events, never change or block them.
 final class DragMonitor {
-    /// A drag carrying files or file promises just started. The point is the mouse
-    /// location in screen coordinates.
-    var onFileDragBegan: (NSPoint) -> Void = { _ in }
+    /// A drag the shelf can accept is under way. The point is the mouse location in
+    /// screen coordinates.
+    var onDragBegan: (NSPoint) -> Void = { _ in }
     /// That drag ended: the mouse button was released, over the shelf or anywhere else.
-    var onFileDragEnded: () -> Void = {}
+    var onDragEnded: () -> Void = {}
+    /// When this returns true, hold off announcing a drag until the pointer reaches
+    /// the left or right side of a screen (the "Only show when a drag reaches the
+    /// side of the screen" setting).
+    var waitsForScreenEdge: () -> Bool = { false }
+
+    /// How close to the side of the screen counts as "reaching" it.
+    private let edgeDistance: CGFloat = 40
 
     /// The system-wide pasteboard an app writes to when it starts a drag-and-drop.
     private let dragPasteboard = NSPasteboard(name: .drag)
@@ -28,7 +35,10 @@ final class DragMonitor {
     /// The mouse went down in one of Stow's own windows, so any drag is Stow's own
     /// (items being dragged out, or the shelf being moved) and must not trigger it.
     private var mouseDownInStow = false
-    private var isTrackingFileDrag = false
+    /// A drag the shelf can accept has been spotted during this press...
+    private var isTrackingDrag = false
+    /// ...and `onDragBegan` has been called for it.
+    private var hasAnnouncedDrag = false
 
     private var monitors: [Any] = []
     /// Runs while the button is held; see `watchPress()`.
@@ -76,7 +86,8 @@ final class DragMonitor {
     }
 
     /// While the button is held, check twenty times a second whether a drag has
-    /// started and whether the button is still down.
+    /// started, whether it has reached the side of the screen (if that setting is
+    /// on), and whether the button is still down.
     ///
     /// Mouse-dragged events alone aren't enough. Once another app's drag gets going,
     /// its events don't always reach our monitors, and the final mouse-up can be
@@ -99,30 +110,41 @@ final class DragMonitor {
     }
 
     private func inspectDrag() {
-        guard !isTrackingFileDrag, !mouseDownInStow,
-              dragPasteboard.changeCount != idleChangeCount
-        else { return }
+        guard !hasAnnouncedDrag, !mouseDownInStow else { return }
 
-        // Only drags carrying files, folders or file promises. Dragged text also lands
-        // on the drag pasteboard, but the shelf can't hold text until Phase 4.
-        //
-        // This checks the pasteboard's types only: reading another app's drag data
-        // here would be blocked by macOS's pasteboard privacy (see offersFileTypes).
-        // It runs again on every tick, because an app empties the pasteboard (which
-        // bumps the count) a moment before it adds the file types.
-        guard ShelfDropView.offersFileTypes(dragPasteboard) else { return }
+        if !isTrackingDrag {
+            guard dragPasteboard.changeCount != idleChangeCount else { return }
+            // Only drags the shelf can take: files, promises, links, text, images.
+            // This checks the pasteboard's types only: reading another app's drag
+            // data here would be blocked by macOS's pasteboard privacy (see
+            // PasteboardContents.offersAcceptedTypes). It runs again on every tick,
+            // because an app empties the pasteboard (which bumps the count) a moment
+            // before it adds the types.
+            guard PasteboardContents.offersAcceptedTypes(dragPasteboard) else { return }
+            isTrackingDrag = true
+        }
 
-        isTrackingFileDrag = true
-        onFileDragBegan(NSEvent.mouseLocation)
+        let point = NSEvent.mouseLocation
+        if waitsForScreenEdge(), !isNearSideOfScreen(point) {
+            return
+        }
+        hasAnnouncedDrag = true
+        onDragBegan(point)
+    }
+
+    private func isNearSideOfScreen(_ point: NSPoint) -> Bool {
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) else { return false }
+        return point.x - screen.frame.minX < edgeDistance || screen.frame.maxX - point.x < edgeDistance
     }
 
     private func buttonReleased() {
         pressTimer?.invalidate()
         pressTimer = nil
-        if isTrackingFileDrag {
-            isTrackingFileDrag = false
-            onFileDragEnded()
+        if hasAnnouncedDrag {
+            onDragEnded()
         }
+        isTrackingDrag = false
+        hasAnnouncedDrag = false
         idleChangeCount = dragPasteboard.changeCount
         mouseDownInStow = false
     }

@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import SwiftUI
 
 /// The shelf's item list. NSCollectionView gives us multi-selection, dragging several
@@ -12,6 +13,11 @@ final class ShelfCollectionView: NSCollectionView {
     var selectedFileURLs: () -> [URL] = { [] }
     /// The user dragged the shelf by an empty part of the list.
     var onWindowMoved: () -> Void = {}
+    /// Delete or Forward Delete was pressed with items selected.
+    var onDeleteKey: () -> Void = {}
+
+    /// The app that was active before Quick Look opened, to hand activation back to.
+    private var appBeforeQuickLook: NSRunningApplication?
 
     /// Accept the very first click even though the shelf's window isn't key.
     /// Without this, the first click on an inactive window is swallowed, so you'd have
@@ -44,6 +50,12 @@ final class ShelfCollectionView: NSCollectionView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard indexPathForItem(at: point) == nil, let window else {
+            // Clicking an item makes the shelf the key window, so the keyboard
+            // shortcuts below (Space, Delete) reach it. The panel is non-activating, so
+            // this doesn't make Stow the active app: the app you're in keeps its menu
+            // bar. Until you click an item, the shelf never takes the keyboard.
+            window?.makeKey()
+            window?.makeFirstResponder(self)
             super.mouseDown(with: event)
             return
         }
@@ -66,6 +78,67 @@ final class ShelfCollectionView: NSCollectionView {
         return contextMenuProvider(true)
     }
 
+    // MARK: - Keyboard
+
+    override func keyDown(with event: NSEvent) {
+        switch Int(event.keyCode) {
+        case 49: // Space
+            toggleQuickLook()
+        case 51, 117: // Delete, Forward Delete
+            if !selectionIndexPaths.isEmpty {
+                onDeleteKey()
+            }
+        default:
+            // Arrow keys, ⌘A and so on: NSCollectionView's own handling.
+            super.keyDown(with: event)
+        }
+    }
+
+    // MARK: - Quick Look
+
+    /// Space opens Quick Look on the selected files, like in Finder.
+    ///
+    /// QLPreviewPanel is a shared system window. When it opens, it looks for a
+    /// "controller" by walking the responder chain from the key window's first
+    /// responder, which is this view (see mouseDown). The three *PreviewPanelControl
+    /// methods below are how this view volunteers, and the data source methods tell it
+    /// what to show.
+    private func toggleQuickLook() {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists(), panel.isVisible {
+            panel.orderOut(nil)
+            return
+        }
+        guard !selectedFileURLs().isEmpty else {
+            NSSound.beep()
+            return
+        }
+        // Quick Look's window only comes to the front for the active app, so activate
+        // Stow while it's open and give activation back when it closes.
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            appBeforeQuickLook = frontmost
+        }
+        NSApp.activate()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        true
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        _ = appBeforeQuickLook?.activate(from: .current, options: [])
+        appBeforeQuickLook = nil
+    }
+
     // MARK: - Services
 
     /// AppKit asks this when it builds a right-click menu: "can you send data of this
@@ -77,6 +150,17 @@ final class ShelfCollectionView: NSCollectionView {
             return self
         }
         return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+}
+
+extension ShelfCollectionView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        selectedFileURLs().count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        let urls = selectedFileURLs()
+        return urls.indices.contains(index) ? urls[index] as NSURL : nil
     }
 }
 

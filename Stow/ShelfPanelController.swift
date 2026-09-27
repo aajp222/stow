@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import QuartzCore
 
 /// Which side of the screen the shelf docks to when it places itself. The shelf is a
@@ -21,6 +22,7 @@ enum ShelfPlacement: Equatable {
 /// Shows, hides, positions and animates the shelf panel.
 final class ShelfPanelController {
     let viewModel: ShelfViewModel
+    private let settings: AppSettings
 
     private let viewController: ShelfViewController
     private let panel = ShelfPanel()
@@ -44,8 +46,9 @@ final class ShelfPanelController {
     /// How far the shelf slides while it fades in or out.
     private let slideDistance: CGFloat = 24
 
-    init(viewModel: ShelfViewModel) {
+    init(viewModel: ShelfViewModel, settings: AppSettings) {
         self.viewModel = viewModel
+        self.settings = settings
         placement = Self.loadPlacement()
         viewController = ShelfViewController(viewModel: viewModel)
         viewController.onHide = { [weak self] in self?.hide() }
@@ -63,6 +66,23 @@ final class ShelfPanelController {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screensChanged() }
         }
+        observeSettings()
+    }
+
+    /// Re-lays out the shelf when "Items shown before scrolling" or "Dock to" changes
+    /// in Settings, the same observation pattern ShelfViewController uses for items.
+    private func observeSettings() {
+        withObservationTracking {
+            _ = settings.visibleItemLimit
+            _ = settings.dockEdge
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.edge = self.dockingEdge(nearestTo: nil, on: nil)
+                self.contentChanged()
+                self.observeSettings()
+            }
+        }
     }
 
     // MARK: - Showing and hiding
@@ -72,6 +92,7 @@ final class ShelfPanelController {
         if isShown {
             hide()
         } else {
+            edge = dockingEdge(nearestTo: nil, on: nil)
             show(on: Self.screenWithMouse())
         }
     }
@@ -133,15 +154,28 @@ final class ShelfPanelController {
 
     // MARK: - Following drags
 
-    /// A file drag started somewhere on the Mac. Bring the shelf to the display the
-    /// pointer is on. If it's already there, it stays put.
-    func fileDragBegan(at point: NSPoint) {
+    /// A drag started somewhere on the Mac. Bring the shelf to the display the pointer
+    /// is on. If it's already there, it stays put.
+    func dragBegan(at point: NSPoint) {
         dragGeneration += 1
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
-        // Automatic placement docks to whichever side is nearer the pointer.
-        edge = point.x < screen.visibleFrame.midX ? .left : .right
+        edge = dockingEdge(nearestTo: point, on: screen)
         show(on: screen)
+    }
+
+    /// The side automatic placement docks to: the side chosen in Settings, or else the
+    /// side nearer `point` (the pointer), or else the side it used last time.
+    private func dockingEdge(nearestTo point: NSPoint?, on screen: NSScreen?) -> ShelfEdge {
+        switch settings.dockEdge {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .nearest:
+            guard let point, let screen else { return edge }
+            return point.x < screen.visibleFrame.midX ? .left : .right
+        }
     }
 
     /// A drag ended: a file drag the monitor was following, or items dragged out of
@@ -198,7 +232,7 @@ final class ShelfPanelController {
     /// The menu's Reset Shelf Position command: go back to docking at the screen edge.
     func resetPlacement() {
         if isShown, let screen {
-            edge = panel.frame.midX < screen.visibleFrame.midX ? .left : .right
+            edge = dockingEdge(nearestTo: NSPoint(x: panel.frame.midX, y: panel.frame.midY), on: screen)
         }
         placement = .automatic
         if isShown, let screen {
@@ -213,7 +247,9 @@ final class ShelfPanelController {
         // tucks underneath either of them.
         let visible = screen.visibleFrame
         let width = ShelfLayout.width
-        let height = min(ShelfLayout.contentHeight(itemCount: viewModel.items.count), visible.height * 0.7).rounded()
+        // Grow to fit at most `visibleItemLimit` items; the list scrolls past that.
+        let shownItems = min(viewModel.items.count, settings.visibleItemLimit)
+        let height = min(ShelfLayout.contentHeight(itemCount: shownItems), visible.height * 0.7).rounded()
 
         switch placement {
         case .automatic:
