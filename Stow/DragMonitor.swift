@@ -12,10 +12,9 @@ final class DragMonitor {
     var onDragBegan: (NSPoint) -> Void = { _ in }
     /// That drag ended: the mouse button was released, over the shelf or anywhere else.
     var onDragEnded: () -> Void = {}
-    /// When this returns true, hold off announcing a drag until the pointer reaches
-    /// the left or right side of a screen (the "Only show when a drag reaches the
-    /// side of the screen" setting).
-    var waitsForScreenEdge: () -> Bool = { false }
+    /// What has to happen before a drag is announced (the "Show the shelf" setting):
+    /// nothing more, the pointer reaching the side of a screen, or a shake.
+    var trigger: () -> ShelfTrigger = { .anyDrag }
 
     /// How close to the side of the screen counts as "reaching" it.
     private let edgeDistance: CGFloat = 40
@@ -43,6 +42,7 @@ final class DragMonitor {
     private var monitors: [Any] = []
     /// Runs while the button is held; see `watchPress()`.
     private var pressTimer: Timer?
+    private var shakeDetector = ShakeDetector()
 
     init() {
         idleChangeCount = dragPasteboard.changeCount
@@ -85,16 +85,17 @@ final class DragMonitor {
         }
     }
 
-    /// While the button is held, check twenty times a second whether a drag has
-    /// started, whether it has reached the side of the screen (if that setting is
-    /// on), and whether the button is still down.
+    /// While the button is held, check sixty times a second whether a drag has
+    /// started, whether it has reached the side of the screen or been shaken (if the
+    /// setting asks for that), and whether the button is still down. (Sixty, so a
+    /// quick shake doesn't slip between two looks at the pointer.)
     ///
     /// Mouse-dragged events alone aren't enough. Once another app's drag gets going,
     /// its events don't always reach our monitors, and the final mouse-up can be
     /// swallowed too. Polling catches both, so no drag slips through.
     private func watchPress() {
         guard pressTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 // Bit 0 of pressedMouseButtons is the left (primary) button.
                 if NSEvent.pressedMouseButtons & 1 == 0 {
@@ -125,8 +126,13 @@ final class DragMonitor {
         }
 
         let point = NSEvent.mouseLocation
-        if waitsForScreenEdge(), !isNearSideOfScreen(point) {
-            return
+        switch trigger() {
+        case .anyDrag:
+            break
+        case .screenEdge:
+            guard isNearSideOfScreen(point) else { return }
+        case .shake:
+            guard shakeDetector.add(point, at: ProcessInfo.processInfo.systemUptime) else { return }
         }
         hasAnnouncedDrag = true
         onDragBegan(point)
@@ -147,5 +153,55 @@ final class DragMonitor {
         hasAnnouncedDrag = false
         idleChangeCount = dragPasteboard.changeCount
         mouseDownInStow = false
+        shakeDetector.reset()
+    }
+}
+
+/// Spots a shake: the pointer swinging left and right several times in quick
+/// succession, like shaking something loose.
+struct ShakeDetector {
+    /// How far a swing must travel to count, in points.
+    var minimumSwing: CGFloat = 25
+    /// How many changes of direction make a shake...
+    var requiredTurns = 3
+    /// ...and within how many seconds.
+    var timeWindow: TimeInterval = 1.0
+
+    private var lastX: CGFloat?
+    /// -1 moving left, 1 moving right, 0 not yet known.
+    private var direction: CGFloat = 0
+    /// Where the current swing started.
+    private var swingStartX: CGFloat = 0
+    /// When each recent change of direction happened.
+    private var turns: [TimeInterval] = []
+
+    mutating func reset() {
+        lastX = nil
+        direction = 0
+        turns = []
+    }
+
+    /// Adds a pointer position (screen coordinates) seen at `time` (seconds, any
+    /// steady clock). Returns true once the recent movement is a shake.
+    mutating func add(_ point: NSPoint, at time: TimeInterval) -> Bool {
+        guard let previousX = lastX else {
+            lastX = point.x
+            swingStartX = point.x
+            return false
+        }
+        lastX = point.x
+        let dx = point.x - previousX
+        guard abs(dx) >= 1 else { return false }
+        let newDirection: CGFloat = dx > 0 ? 1 : -1
+        if newDirection != direction {
+            // The swing that just ended ran from swingStartX to previousX.
+            if direction != 0, abs(previousX - swingStartX) >= minimumSwing {
+                turns.append(time)
+            }
+            direction = newDirection
+            swingStartX = previousX
+        }
+        turns.removeAll { time - $0 > timeWindow }
+        return turns.count >= requiredTurns
     }
 }

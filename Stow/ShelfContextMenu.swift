@@ -49,6 +49,9 @@ final class ShelfContextMenu: NSObject {
             menu.addItem(picker.standardShareMenuItem)
 
             if allFiles {
+                let quickActions = NSMenuItem(title: "Quick Actions", action: nil, keyEquivalent: "")
+                quickActions.submenu = makeQuickActionsMenu(for: urls)
+                menu.addItem(quickActions)
                 menu.addItem(makeItem("Rename…", #selector(renameItem), enabled: urls.count == 1))
                 menu.addItem(makeItem("Move…", #selector(moveItems)))
             }
@@ -57,11 +60,16 @@ final class ShelfContextMenu: NSObject {
                 menu.addItem(makeItem("Show in Finder", #selector(showInFinder)))
             }
             menu.addItem(.separator())
+            let allPinned = items.allSatisfy { $0.isPinned }
+            menu.addItem(makeItem(allPinned ? "Unpin" : "Pin", allPinned ? #selector(unpinItems) : #selector(pinItems)))
             // Gathering items that are already one whole stack would change nothing.
             let sharedStack = Set(items.map { $0.stackID }).count == 1 ? items[0].stackID : nil
             let isOneStack = sharedStack != nil && stackSize(sharedStack) == items.count
             if items.count >= 2, !isOneStack {
                 menu.addItem(makeItem("Stack Items", #selector(stackItems)))
+            }
+            if isOneStack {
+                menu.addItem(makeItem("Rename Stack…", #selector(renameStack)))
             }
             if items.contains(where: { $0.stackID.map { stackSize($0) >= 2 } ?? false }) {
                 menu.addItem(makeItem("Unstack", #selector(unstackItems)))
@@ -90,6 +98,82 @@ final class ShelfContextMenu: NSObject {
         item.target = self
         item.isEnabled = enabled
         return item
+    }
+
+    // MARK: - Quick Actions
+
+    /// Makes new files from the selection: a zip, converted or smaller images, or one
+    /// PDF. The originals are left alone; each result lands on the shelf next to them.
+    private func makeQuickActionsMenu(for urls: [URL]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let images = urls.filter(QuickActions.isImage)
+        let allImages = images.count == urls.count
+        let pages = urls.filter { QuickActions.isImage($0) || QuickActions.isPDF($0) }
+
+        menu.addItem(makeItem("Compress", #selector(compressItems)))
+        menu.addItem(.separator())
+        for type in QuickActions.conversionTypes {
+            let name = type.preferredFilenameExtension?.uppercased() ?? type.localizedDescription ?? "Image"
+            let item = makeItem("Convert to \(name)", #selector(convertItems(_:)), enabled: allImages)
+            item.representedObject = type.identifier
+            menu.addItem(item)
+        }
+        menu.addItem(makeItem("Make Smaller", #selector(makeItemsSmaller), enabled: allImages))
+        menu.addItem(.separator())
+        menu.addItem(makeItem("Combine into PDF", #selector(combineIntoPDF), enabled: pages.count == urls.count && !pages.isEmpty))
+        return menu
+    }
+
+    @objc private func compressItems() {
+        let urls = targets.compactMap { $0.fileURL }
+        runQuickAction("Couldn't compress the items") { folder in
+            [try QuickActions.compress(urls, into: folder)]
+        }
+    }
+
+    @objc private func convertItems(_ sender: NSMenuItem) {
+        guard let identifier = sender.representedObject as? String, let type = UTType(identifier) else { return }
+        let urls = targets.compactMap { $0.fileURL }
+        runQuickAction("Couldn't convert the images") { folder in
+            try urls.map { try QuickActions.convert($0, to: type, into: folder) }
+        }
+    }
+
+    @objc private func makeItemsSmaller() {
+        let urls = targets.compactMap { $0.fileURL }
+        runQuickAction("Couldn't make the images smaller") { folder in
+            try urls.map { try QuickActions.makeSmaller($0, into: folder) }
+        }
+    }
+
+    @objc private func combineIntoPDF() {
+        let urls = targets.compactMap { $0.fileURL }
+        runQuickAction("Couldn't combine the items into a PDF") { folder in
+            [try QuickActions.combineIntoPDF(urls, into: folder)]
+        }
+    }
+
+    /// Runs a quick action on a background thread and puts what it made on the shelf,
+    /// after the last of the items it was made from. Results go in a fresh folder in
+    /// Stow's own storage, so they're Stow copies: cleaned up once removed.
+    private func runQuickAction(_ failureTitle: String, _ work: @escaping @Sendable (URL) throws -> [URL]) {
+        let anchor = targets.last?.id
+        let folder: URL
+        do {
+            folder = try PromisedFileStore().makeDropFolder()
+        } catch {
+            Dialog.showProblem(failureTitle, details: error.localizedDescription)
+            return
+        }
+        Task {
+            do {
+                let results = try await Task.detached(priority: .userInitiated) { try work(folder) }.value
+                viewModel.addStowCopies(results, after: anchor)
+            } catch {
+                Dialog.showProblem(failureTitle, details: error.localizedDescription)
+            }
+        }
     }
 
     // MARK: - Open With
@@ -149,7 +233,7 @@ final class ShelfContextMenu: NSObject {
         panel.allowedContentTypes = [.application]
         panel.prompt = "Open"
         panel.message = "Choose an app to open the file with."
-        guard Self.runModal({ panel.runModal() }) == .OK, let app = panel.url else { return }
+        guard Dialog.run({ panel.runModal() }) == .OK, let app = panel.url else { return }
         open(with: app)
     }
 
@@ -172,7 +256,7 @@ final class ShelfContextMenu: NSObject {
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard Self.runModal({ alert.runModal() }) == .alertFirstButtonReturn else { return }
+        guard Dialog.run({ alert.runModal() }) == .alertFirstButtonReturn else { return }
         let folder = url.deletingLastPathComponent()
         do {
             try withFolderAccess(
@@ -184,7 +268,7 @@ final class ShelfContextMenu: NSObject {
         } catch is CancellationError {
             return
         } catch {
-            Self.showProblem("Couldn't rename “\(url.lastPathComponent)”", details: error.localizedDescription)
+            Dialog.showProblem("Couldn't rename “\(url.lastPathComponent)”", details: error.localizedDescription)
         }
     }
 
@@ -197,7 +281,7 @@ final class ShelfContextMenu: NSObject {
         panel.message = targets.count == 1
             ? "Choose where to move “\(targets[0].displayName)”."
             : "Choose where to move \(targets.count) items."
-        guard Self.runModal({ panel.runModal() }) == .OK, let destination = panel.url else { return }
+        guard Dialog.run({ panel.runModal() }) == .OK, let destination = panel.url else { return }
         var problems: [String] = []
         for item in targets {
             guard let url = item.fileURL else { continue }
@@ -216,7 +300,7 @@ final class ShelfContextMenu: NSObject {
             }
         }
         if !problems.isEmpty {
-            Self.showProblem("Some items couldn't be moved", details: problems.joined(separator: "\n"))
+            Dialog.showProblem("Some items couldn't be moved", details: problems.joined(separator: "\n"))
         }
     }
 
@@ -241,7 +325,7 @@ final class ShelfContextMenu: NSObject {
             panel.canChooseDirectories = true
             panel.allowsMultipleSelection = false
             panel.directoryURL = folder
-            guard Self.runModal({ panel.runModal() }) == .OK, let granted = panel.url else {
+            guard Dialog.run({ panel.runModal() }) == .OK, let granted = panel.url else {
                 throw CancellationError()
             }
             if granted.startAccessingSecurityScopedResource() {
@@ -282,6 +366,31 @@ final class ShelfContextMenu: NSObject {
 
     @objc private func showInFinder() {
         NSWorkspace.shared.activateFileViewerSelecting(targets.compactMap { $0.fileURL })
+    }
+
+    @objc private func pinItems() {
+        viewModel.setPinned(Set(targets.map { $0.id }), true)
+    }
+
+    @objc private func unpinItems() {
+        viewModel.setPinned(Set(targets.map { $0.id }), false)
+    }
+
+    /// Names a stack, like "Tax docs". The name shows instead of "5 items".
+    @objc private func renameStack() {
+        guard let stackID = targets.first?.stackID else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Stack"
+        alert.informativeText = "Leave it empty to show the number of items instead."
+        let field = NSTextField(string: targets.first?.stackName ?? "")
+        field.placeholderString = "\(targets.count) items"
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard Dialog.run({ alert.runModal() }) == .alertFirstButtonReturn else { return }
+        viewModel.renameStack(stackID, to: field.stringValue)
     }
 
     @objc private func stackItems() {
@@ -338,28 +447,5 @@ final class ShelfContextMenu: NSObject {
         if !viewModel.addClipboardContents() {
             NSSound.beep()
         }
-    }
-
-    // MARK: - Dialogs
-
-    /// Runs a dialog. Stow is normally never the active app, but you can only type
-    /// into a dialog in the active app, so activate Stow for the dialog, then give
-    /// activation back to the app you were using.
-    private static func runModal<Result>(_ body: () -> Result) -> Result {
-        let previousApp = NSWorkspace.shared.frontmostApplication
-        NSApp.activate()
-        let result = body()
-        if let previousApp, previousApp.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            previousApp.activate(from: .current, options: [])
-        }
-        return result
-    }
-
-    private static func showProblem(_ title: String, details: String) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = title
-        alert.informativeText = details
-        _ = runModal { alert.runModal() }
     }
 }

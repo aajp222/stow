@@ -21,11 +21,16 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
     /// The area around the shelf (screen coordinates) where items let go slide back
     /// instead of being flicked off.
     var shelfFrame: () -> NSRect = { .zero }
+    /// The drag crossed into (true) or back out of (false) the area where letting go
+    /// flicks the items off.
+    var onFlickZoneChange: (Bool) -> Void = { _ in }
+    private var isInFlickZone = false
 
     func begin(itemIDs: [ShelfItem.ID], detachedIDs: Set<ShelfItem.ID>) {
         self.itemIDs = itemIDs
         self.detachedIDs = detachedIDs
         droppedOnShelf = false
+        isInFlickZone = false
     }
 
     /// Which operations the drag allows. AppKit asks again as the drag moves and as
@@ -49,7 +54,12 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
     /// away they're being flicked off, and vanish in a puff of smoke instead (see
     /// ShelfViewController.dragEnded), so they shouldn't slide back first.
     func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-        session.animatesToStartingPositionsOnCancelOrFail = shelfFrame().contains(screenPoint)
+        let nearShelf = shelfFrame().contains(screenPoint)
+        session.animatesToStartingPositionsOnCancelOrFail = nearShelf
+        if isInFlickZone == nearShelf {
+            isInFlickZone = !nearShelf
+            onFlickZoneChange(isInFlickZone)
+        }
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {

@@ -8,5 +8,18 @@
 	     doesn't need to ask about export compliance on every upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- The "stow:" URL scheme. The Share menu extension opens stow://inbox to
+	     launch Stow when something is shared while it isn't running. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.aaryanjigarpanchal.Stow</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stow</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

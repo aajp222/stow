@@ -8,5 +8,11 @@
 	     relaunch. -->
 	<key>com.apple.security.files.bookmarks.app-scope</key>
 	<true/>
+	<!-- A folder shared with the Share menu extension, where it leaves what you
+	     share for Stow to pick up (see ShareInbox.swift). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>2MUHC6TNGW.com.aaryanjigarpanchal.Stow</string>
+	</array>
 </dict>
 </plist>

@@ -35,6 +35,12 @@ struct ShelfItemView: View {
                     .padding(4)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if row.isPinned {
+                PinBadge()
+                    .padding(5)
+            }
+        }
         .accessibilityHidden(true)
     }
 
@@ -64,7 +70,7 @@ struct ShelfItemView: View {
             Text(item.displayName)
         case .stack(_, let members):
             HStack(spacing: 3) {
-                Text("\(members.count) items")
+                Text(row.stackName ?? "\(members.count) items")
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -135,6 +141,16 @@ private struct RemoveBadge: View {
             .background(.regularMaterial, in: Circle())
             .overlay(Circle().strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
+    }
+}
+
+/// The pin shown in a pinned item's corner.
+private struct PinBadge: View {
+    var body: some View {
+        Image(systemName: "pin.fill")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .rotationEffect(.degrees(45))
     }
 }
 
