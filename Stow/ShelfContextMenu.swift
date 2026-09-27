@@ -36,7 +36,7 @@ final class ShelfContextMenu: NSObject {
             let allLinks = items.allSatisfy { if case .link = $0.content { true } else { false } }
 
             let openTitle = allLinks ? (items.count == 1 ? "Open Link" : "Open Links") : "Open"
-            menu.addItem(makeItem(openTitle, #selector(openItems), enabled: items.contains(where: Self.canOpen)))
+            menu.addItem(makeItem(openTitle, #selector(openItems), enabled: items.contains { Self.canOpen($0) }))
             if allFiles {
                 let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                 openWith.submenu = makeOpenWithMenu(for: urls)

@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import QuartzCore
 
 /// Sizes shared by the shelf's view and the panel that holds it.
 enum ShelfLayout {
@@ -593,7 +594,7 @@ final class ShelfViewController: NSViewController {
             let released = NSEvent.pressedMouseButtons & 1 == 0
             if released, !flickSafeFrame.contains(endPoint) {
                 if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                    NSAnimationEffect.poof.show(centeredAt: endPoint, size: NSSize(width: 48, height: 48), completionHandler: {})
+                    PuffOfSmoke.show(at: endPoint)
                 }
                 viewModel.remove(Set(ids))
             }
@@ -758,6 +759,39 @@ private final class ShelfContentView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         menuProvider()
+    }
+}
+
+/// The little cloud shown where flicked-off items vanish. AppKit's own version
+/// (NSAnimationEffect.poof) is deprecated, so this plays the system's "disappearing
+/// item" cursor picture in a tiny window of its own, growing as it fades out.
+private enum PuffOfSmoke {
+    static func show(at screenPoint: NSPoint) {
+        let side: CGFloat = 40
+        let frame = NSRect(x: screenPoint.x - side / 2, y: screenPoint.y - side / 2, width: side, height: side)
+        let window = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        // Above the shelf and other floating windows.
+        window.level = .popUpMenu
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        let imageView = NSImageView(image: NSCursor.disappearingItem.image)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        window.contentView = imageView
+        window.orderFrontRegardless()
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.35
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(frame.insetBy(dx: -side / 4, dy: -side / 4), display: true)
+            window.animator().alphaValue = 0
+        }, completionHandler: {
+            // AppKit calls animation completion handlers on the main thread.
+            MainActor.assumeIsolated { window.orderOut(nil) }
+        })
     }
 }
 

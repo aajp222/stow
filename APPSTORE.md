@@ -42,11 +42,13 @@ The project is already set up for the App Store: App Sandbox, app icon, category
 > Thanks for testing Stow! It lives in the menu bar (the tray icon); there's no Dock icon.
 > 1. Pick up a file in Finder. Does the shelf slide in? Drop the file on it, then drag it out into another folder or an email.
 > 2. Drop in a screenshot thumbnail (⌘⇧4), a photo from Photos, some selected text, and a link from a browser.
-> 3. Right-click items and try Open With, Share, Rename, Move, Copy, Show in Finder, Remove and Restore Last Removed Files.
-> 4. Click an item and press Space for Quick Look.
-> 5. Press ⌃⌥S to show or hide the shelf. Drag the shelf by its header to move it.
-> 6. Quit and reopen Stow; your items should still be there.
-> 7. Tray icon → Settings…: try the options.
+> 3. Drop several files at once: they become a stack. Drag the stack out as a whole, or click it to fan it open and use the files one by one.
+> 4. Drag items up and down the shelf to reorder them. Click the ✕ on an item to remove it, or drag it far from the shelf and let go.
+> 5. Right-click items and try Open, Open With, Share, Rename, Move, Copy, Show in Finder, Stack Items, Unstack, Remove and Restore Last Removed Files.
+> 6. Click an item, then try the arrow keys, Space (Quick Look), Return (open), ⌘C, and typing part of a name to filter.
+> 7. Press ⌃⌥S to show or hide the shelf. Drag the shelf by its header to move it.
+> 8. Quit and reopen Stow; your items and stacks should still be there.
+> 9. Tray icon → Settings…: try the options, including picking your own shortcut.
 >
 > Tell me about anything that doesn't show up when it should, looks wrong, or is confusing.
 
