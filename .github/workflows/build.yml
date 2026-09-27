@@ -1,0 +1,24 @@
+# Compile check on a GitHub-hosted Mac. Runs the same xcodebuild you'd run
+# locally, with code signing turned off (the runner doesn't have your Apple ID).
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild -project Stow.xcodeproj -target Stow -configuration Debug \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO -quiet build
