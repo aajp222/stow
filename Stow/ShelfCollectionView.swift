@@ -65,6 +65,31 @@ final class ShelfItemCell: NSCollectionViewItem {
         didSet { render() }
     }
 
+    /// The picture that follows the pointer while this item is dragged. By default
+    /// AppKit snapshots the cell's view, but SwiftUI content often comes out blank in
+    /// those snapshots, so build it from the thumbnail instead.
+    override var draggingImageComponents: [NSDraggingImageComponent] {
+        guard let item else { return super.draggingImageComponents }
+        let thumbnails = ThumbnailProvider.shared
+        let image = thumbnails.cachedThumbnail(for: item) ?? thumbnails.icon(for: item)
+        let component = NSDraggingImageComponent(key: .icon)
+        component.contents = image
+        component.frame = thumbnailFrame(fitting: image.size)
+        return [component]
+    }
+
+    /// Where ShelfItemView draws the 64×64 thumbnail (6 pt from the top, centred),
+    /// narrowed to the image's aspect ratio. Frames are in the cell view's coordinates,
+    /// which start at the bottom left.
+    private func thumbnailFrame(fitting imageSize: NSSize) -> NSRect {
+        let side: CGFloat = 64
+        let box = NSRect(x: (view.bounds.width - side) / 2, y: view.bounds.height - 6 - side, width: side, height: side)
+        guard imageSize.width > 0, imageSize.height > 0 else { return box }
+        let scale = min(side / imageSize.width, side / imageSize.height)
+        let size = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return NSRect(x: box.midX - size.width / 2, y: box.midY - size.height / 2, width: size.width, height: size.height)
+    }
+
     private func render() {
         guard let item else { return }
         let rootView = ShelfItemView(item: item, isSelected: isSelected)

@@ -17,6 +17,14 @@ final class ThumbnailProvider {
         }
     }
 
+    /// The thumbnail if it has already been made, without waiting for one.
+    func cachedThumbnail(for item: ShelfItem) -> NSImage? {
+        switch item.content {
+        case .file(let url):
+            return cache.object(forKey: url as NSURL)
+        }
+    }
+
     /// A Quick Look thumbnail, or nil if the file can't be previewed.
     func thumbnail(for item: ShelfItem, size: CGSize, scale: CGFloat) async -> NSImage? {
         switch item.content {
