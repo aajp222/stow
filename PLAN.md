@@ -63,6 +63,12 @@ Drag the shelf anywhere, with the spot remembered and a Reset Shelf Position men
 ### Phase 5: Liquid Glass look ✅ built (done ahead of Phase 4)
 The shelf's background is an `NSGlassEffectView` (`ShelfViewController.makeGlassBackground()`), with 20 pt corners. Everything visible sits inside the glass view's `contentView`. While files hover over the shelf, the glass takes an accent tint.
 
+## Releases
+
+`.github/workflows/release.yml` builds a Release version of Stow for Apple Silicon and Intel, zips it, and publishes it as a GitHub Release with install steps. To publish, go to Actions → Release → Run workflow and enter a version such as `1.1`; pushing a `v1.1` tag also works. Friends download from https://github.com/aajp222/stow/releases/latest.
+
+The app is signed ad hoc, not with a paid Developer ID, so on another Mac the first launch must be allowed once in System Settings → Privacy & Security → Open Anyway. Removing that step would take the Apple Developer Program: a Developer ID signature plus notarization.
+
 ## Code map
 
 | File | Role |
