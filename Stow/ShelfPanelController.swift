@@ -87,14 +87,24 @@ final class ShelfPanelController {
 
     // MARK: - Showing and hiding
 
-    /// The menu bar's Show/Hide Shelf command.
-    func toggle() {
+    /// The menu bar's Show/Hide Shelf command, and the keyboard shortcut. `focus`
+    /// gives the shown shelf the keyboard (see ShelfViewController.focusList).
+    func toggle(focus: Bool = false) {
         if isShown {
             hide()
         } else {
             edge = dockingEdge(nearestTo: nil, on: nil)
             show(on: Self.screenWithMouse())
+            if focus {
+                viewController.focusList()
+            }
         }
+    }
+
+    /// With Reduce Motion on (System Settings > Accessibility > Display), the shelf
+    /// fades in and out without sliding.
+    private var slideOffset: CGFloat {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : slideDistance
     }
 
     /// Slides the shelf in on `screen`, at its placement. If it's already there, just
@@ -114,7 +124,7 @@ final class ShelfPanelController {
         // Start a little further toward the nearer side and fully transparent, then
         // slide in.
         let outward = Self.outwardDirection(of: target, on: screen)
-        panel.setFrame(target.offsetBy(dx: outward * slideDistance, dy: 0), display: false)
+        panel.setFrame(target.offsetBy(dx: outward * slideOffset, dy: 0), display: false)
         panel.alphaValue = 0
         // orderFrontRegardless puts the window on screen even though Stow isn't the
         // active app, without activating Stow or making the panel key.
@@ -137,7 +147,7 @@ final class ShelfPanelController {
 
         let panel = self.panel
         let outward = Self.outwardDirection(of: panel.frame, on: screen)
-        let target = panel.frame.offsetBy(dx: outward * slideDistance, dy: 0)
+        let target = panel.frame.offsetBy(dx: outward * slideOffset, dy: 0)
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -148,6 +158,8 @@ final class ShelfPanelController {
             MainActor.assumeIsolated {
                 guard let self, self.animationGeneration == generation else { return }
                 self.panel.orderOut(nil)
+                // Next time, the shelf shows everything again.
+                self.viewController.clearFilter()
             }
         })
     }
@@ -247,9 +259,9 @@ final class ShelfPanelController {
         // tucks underneath either of them.
         let visible = screen.visibleFrame
         let width = ShelfLayout.width
-        // Grow to fit at most `visibleItemLimit` items; the list scrolls past that.
-        let shownItems = min(viewModel.items.count, settings.visibleItemLimit)
-        let height = min(ShelfLayout.contentHeight(itemCount: shownItems), visible.height * 0.7).rounded()
+        // Grow to fit at most `visibleItemLimit` rows; the list scrolls past that.
+        let shownRows = min(viewController.rowCount, settings.visibleItemLimit)
+        let height = min(ShelfLayout.contentHeight(rowCount: shownRows), visible.height * 0.7).rounded()
 
         switch placement {
         case .automatic:

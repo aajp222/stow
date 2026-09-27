@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import Foundation
 
 /// A system-wide keyboard shortcut, registered with Carbon's `RegisterEventHotKey`.
 ///
@@ -12,26 +13,39 @@ final class HotKey {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
-    /// `keyCode` is a virtual key code such as `kVK_ANSI_S`; `modifiers` are Carbon
-    /// flags such as `controlKey | optionKey`. Returns nil if the shortcut couldn't be
-    /// registered, for example because another app already uses it.
-    init?(keyCode: Int, modifiers: Int, action: @escaping () -> Void) {
+    /// `action` runs whenever the registered shortcut is pressed. Nothing is
+    /// registered until `register(_:)` is called.
+    init(action: @escaping () -> Void) {
         self.action = action
 
         // Ask Carbon to call hotKeyPressed (below) for hot-key events sent to Stow,
         // passing a pointer to this object so the C callback can find it again.
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let context = Unmanaged.passUnretained(self).toOpaque()
-        guard InstallEventHandler(GetApplicationEventTarget(), hotKeyPressed, 1, &eventType, context, &handlerRef) == noErr else {
-            return nil
+        if InstallEventHandler(GetApplicationEventTarget(), hotKeyPressed, 1, &eventType, context, &handlerRef) != noErr {
+            NSLog("Stow: couldn't listen for the keyboard shortcut.")
         }
+    }
 
+    /// Registers `combo` in place of the current shortcut, or just removes the current
+    /// one when `combo` is nil. Returns false if it couldn't be registered, for example
+    /// because another app already uses that combination.
+    @discardableResult
+    func register(_ combo: KeyCombo?) -> Bool {
+        unregister()
+        guard let combo else { return true }
+        guard handlerRef != nil else { return false }
         // 'STOW' as a four-character code, identifying our shortcut.
         let id = EventHotKeyID(signature: 0x5354_4F57, id: 1)
-        guard RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), id, GetApplicationEventTarget(), 0, &hotKeyRef) == noErr else {
-            RemoveEventHandler(handlerRef)
-            return nil
+        let status = RegisterEventHotKey(UInt32(combo.keyCode), UInt32(combo.modifiers), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        return status == noErr
+    }
+
+    private func unregister() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
         }
+        hotKeyRef = nil
     }
 
     fileprivate func fire() {

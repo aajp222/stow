@@ -1,6 +1,19 @@
+import Carbon.HIToolbox
 import Foundation
 import Observation
 import ServiceManagement
+
+/// A keyboard shortcut, stored the way Carbon's RegisterEventHotKey wants it.
+struct KeyCombo: Equatable, Codable {
+    /// A virtual key code, such as kVK_ANSI_S.
+    var keyCode: Int
+    /// Carbon modifier flags (cmdKey, controlKey, optionKey, shiftKey).
+    var modifiers: Int
+    /// How the shortcut reads, such as "⌃⌥S".
+    var display: String
+
+    static let `default` = KeyCombo(keyCode: kVK_ANSI_S, modifiers: controlKey | optionKey, display: "⌃⌥S")
+}
 
 /// Which side the shelf docks to when it places itself (see ShelfPlacement).
 enum DockEdgePreference: String, CaseIterable {
@@ -25,6 +38,9 @@ final class AppSettings {
         static let visibleItemLimit = "VisibleItemLimit"
         static let dockEdge = "DockEdge"
         static let showOnlyAtScreenEdge = "ShowOnlyAtScreenEdge"
+        static let stackDroppedFiles = "StackDroppedFiles"
+        static let showCountInMenuBar = "ShowCountInMenuBar"
+        static let shortcut = "Shortcut"
     }
 
     /// The allowed range for "Items shown before scrolling".
@@ -38,6 +54,8 @@ final class AppSettings {
             Key.visibleItemLimit: 4,
             Key.dockEdge: DockEdgePreference.nearest.rawValue,
             Key.showOnlyAtScreenEdge: false,
+            Key.stackDroppedFiles: true,
+            Key.showCountInMenuBar: true,
         ])
         loginItemStatus = SMAppService.mainApp.status
     }
@@ -94,6 +112,63 @@ final class AppSettings {
             }
         }
     }
+
+    /// Files dropped together (two or more at once) become one stack.
+    var stackDroppedFiles: Bool {
+        get {
+            access(keyPath: \.stackDroppedFiles)
+            return defaults.bool(forKey: Key.stackDroppedFiles)
+        }
+        set {
+            withMutation(keyPath: \.stackDroppedFiles) {
+                defaults.set(newValue, forKey: Key.stackDroppedFiles)
+            }
+        }
+    }
+
+    /// Show how many items are on the shelf next to the menu bar icon.
+    var showCountInMenuBar: Bool {
+        get {
+            access(keyPath: \.showCountInMenuBar)
+            return defaults.bool(forKey: Key.showCountInMenuBar)
+        }
+        set {
+            withMutation(keyPath: \.showCountInMenuBar) {
+                defaults.set(newValue, forKey: Key.showCountInMenuBar)
+            }
+        }
+    }
+
+    // MARK: - Shortcut
+
+    /// The global shortcut that shows or hides the shelf, or nil for none. Stored as
+    /// JSON; never having set one means the default, ⌃⌥S.
+    var shortcut: KeyCombo? {
+        get {
+            access(keyPath: \.shortcut)
+            guard let data = defaults.data(forKey: Key.shortcut) else { return KeyCombo.default }
+            // A stored `null` means you cleared the shortcut, which is different from
+            // a value that won't decode (then fall back to the default).
+            do {
+                return try JSONDecoder().decode(KeyCombo?.self, from: data)
+            } catch {
+                return KeyCombo.default
+            }
+        }
+        set {
+            withMutation(keyPath: \.shortcut) {
+                defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.shortcut)
+            }
+        }
+    }
+
+    /// True while the Settings window is recording a new shortcut. The current one is
+    /// switched off meanwhile, so pressing it gets recorded instead of toggling the
+    /// shelf. Not saved.
+    var isRecordingShortcut = false
+
+    /// Why the shortcut couldn't be registered, if it couldn't. Not saved.
+    var shortcutProblem: String?
 
     // MARK: - Open at login
 

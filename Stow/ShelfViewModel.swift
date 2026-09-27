@@ -75,19 +75,23 @@ final class ShelfViewModel {
                 }
             }
         }
-        addFiles(files)
-        receive(promises)
+        // Two or more files dropped at once become one stack (if that setting is on).
+        // Promised files arrive later and join the same stack as they land.
+        let fileCount = files.count + promises.reduce(0) { $0 + max($1.fileNames.count, 1) }
+        let stackID = settings.stackDroppedFiles && fileCount >= 2 ? UUID() : nil
+        addFiles(files, stackID: stackID)
+        receive(promises, stackID: stackID)
         items += newItems
     }
 
     /// Adds references to files and folders. Anything already on the shelf is skipped.
-    func addFiles(_ urls: [URL]) {
+    func addFiles(_ urls: [URL], stackID: UUID? = nil) {
         var seen = Set(items.compactMap { $0.fileURL?.standardizedFileURL })
         var newItems: [ShelfItem] = []
         for url in urls {
             let url = url.standardizedFileURL
             guard seen.insert(url).inserted else { continue }
-            newItems.append(ShelfItem(content: .file(url)))
+            newItems.append(ShelfItem(content: .file(url), stackID: stackID))
         }
         items += newItems
     }
@@ -99,7 +103,7 @@ final class ShelfViewModel {
     /// Photos and Mail attachments drag this way. We pick a destination folder, the
     /// source app writes the file there, and the reader block below runs once per
     /// file when it's done.
-    func receive(_ promises: [NSFilePromiseReceiver]) {
+    func receive(_ promises: [NSFilePromiseReceiver], stackID: UUID? = nil) {
         for promise in promises {
             let folder: URL
             do {
@@ -122,13 +126,13 @@ final class ShelfViewModel {
             // marked @Sendable and hops back to the main actor before touching `items`.
             promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: promiseQueue) { @Sendable [weak self] fileURL, error in
                 Task { @MainActor [weak self] in
-                    self?.promisedFileArrived(fileURL, error: error, drop: drop)
+                    self?.promisedFileArrived(fileURL, error: error, drop: drop, stackID: stackID)
                 }
             }
         }
     }
 
-    private func promisedFileArrived(_ fileURL: URL, error: Error?, drop: UUID) {
+    private func promisedFileArrived(_ fileURL: URL, error: Error?, drop: UUID, stackID: UUID?) {
         if let remaining = pendingPromises[drop] {
             pendingPromises[drop] = remaining > 1 ? remaining - 1 : nil
         }
@@ -136,7 +140,13 @@ final class ShelfViewModel {
             NSLog("Stow: a promised file didn't arrive: \(error.localizedDescription)")
             return
         }
-        items.append(ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true))
+        let item = ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true, stackID: stackID)
+        // Join the rest of its stack, if it's part of one that's still on the shelf.
+        if let stackID, let last = items.lastIndex(where: { $0.stackID == stackID }) {
+            items.insert(item, at: last + 1)
+        } else {
+            items.append(item)
+        }
     }
 
     /// "Add Clipboard Contents to Stow": adds whatever is on the clipboard, the same
@@ -196,6 +206,62 @@ final class ShelfViewModel {
         items[index] = items[index].relocated(to: destination, isStowCopy: promisedFiles.owns(destination))
     }
 
+    // MARK: - Arranging
+
+    /// Moves items so they sit just before `targetID` (or at the end when it's nil),
+    /// keeping their order. Items in `detached` leave their stack; a whole stack that's
+    /// moved stays together.
+    func reorder(_ ids: [ShelfItem.ID], before targetID: ShelfItem.ID?, detaching detached: Set<ShelfItem.ID>) {
+        let moving = Set(ids)
+        var moved = items.filter { moving.contains($0.id) }
+        for index in moved.indices where detached.contains(moved[index].id) {
+            moved[index].stackID = nil
+        }
+        var remaining = items.filter { !moving.contains($0.id) }
+        let insertAt = targetID.flatMap { id in remaining.firstIndex { $0.id == id } } ?? remaining.endIndex
+        remaining.insert(contentsOf: moved, at: insertAt)
+        items = Self.gatherStacks(remaining)
+    }
+
+    /// Gathers items into one new stack, where the first of them is.
+    func stack(_ ids: [ShelfItem.ID]) {
+        guard Set(ids).count >= 2 else { return }
+        let members = Set(ids)
+        let stackID = UUID()
+        var updated = items
+        for index in updated.indices where members.contains(updated[index].id) {
+            updated[index].stackID = stackID
+        }
+        items = Self.gatherStacks(updated)
+    }
+
+    /// Takes items out of their stacks, leaving them where they are.
+    func unstack(_ ids: [ShelfItem.ID]) {
+        let loose = Set(ids)
+        var updated = items
+        for index in updated.indices where loose.contains(updated[index].id) {
+            updated[index].stackID = nil
+        }
+        items = Self.gatherStacks(updated)
+    }
+
+    /// Keeps each stack's members next to each other, where its first member is. The
+    /// shelf shows a stack as one row, which only works if its members are together.
+    private static func gatherStacks(_ list: [ShelfItem]) -> [ShelfItem] {
+        var result: [ShelfItem] = []
+        var placed = Set<UUID>()
+        for item in list {
+            guard let stackID = item.stackID else {
+                result.append(item)
+                continue
+            }
+            if placed.insert(stackID).inserted {
+                result += list.filter { $0.stackID == stackID }
+            }
+        }
+        return result
+    }
+
     // MARK: - Removing
 
     /// Removes items (the right-click "Remove" command). Files that live elsewhere are
@@ -252,7 +318,7 @@ final class ShelfViewModel {
             restored.append(item)
         }
         lastRemoved = []
-        items += restored
+        items = Self.gatherStacks(items + restored)
     }
 
     /// Makes `removed` the batch Restore Last Removed Files brings back.

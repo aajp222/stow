@@ -35,12 +35,12 @@ final class ShelfContextMenu: NSObject {
             let allFiles = urls.count == items.count
             let allLinks = items.allSatisfy { if case .link = $0.content { true } else { false } }
 
+            let openTitle = allLinks ? (items.count == 1 ? "Open Link" : "Open Links") : "Open"
+            menu.addItem(makeItem(openTitle, #selector(openItems), enabled: items.contains(where: Self.canOpen)))
             if allFiles {
                 let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                 openWith.submenu = makeOpenWithMenu(for: urls)
                 menu.addItem(openWith)
-            } else if allLinks {
-                menu.addItem(makeItem(items.count == 1 ? "Open Link" : "Open Links", #selector(openLinks)))
             }
 
             // The standard Share… item; choosing it shows the system share menu.
@@ -57,6 +57,15 @@ final class ShelfContextMenu: NSObject {
                 menu.addItem(makeItem("Show in Finder", #selector(showInFinder)))
             }
             menu.addItem(.separator())
+            // Gathering items that are already one whole stack would change nothing.
+            let sharedStack = Set(items.map { $0.stackID }).count == 1 ? items[0].stackID : nil
+            let isOneStack = sharedStack != nil && stackSize(sharedStack) == items.count
+            if items.count >= 2, !isOneStack {
+                menu.addItem(makeItem("Stack Items", #selector(stackItems)))
+            }
+            if items.contains(where: { $0.stackID.map { stackSize($0) >= 2 } ?? false }) {
+                menu.addItem(makeItem("Unstack", #selector(unstackItems)))
+            }
             menu.addItem(makeItem("Remove", #selector(removeItems)))
             menu.addItem(.separator())
         }
@@ -68,6 +77,12 @@ final class ShelfContextMenu: NSObject {
             enabled: PasteboardContents.offersAcceptedTypes(.general)
         ))
         return menu
+    }
+
+    /// How many items on the shelf share a stack ID. A "stack" of one shows as an
+    /// ordinary item, so it isn't offered Unstack.
+    private func stackSize(_ stackID: UUID?) -> Int {
+        viewModel.items.filter { $0.stackID == stackID }.count
     }
 
     private func makeItem(_ title: String, _ action: Selector, enabled: Bool = true) -> NSMenuItem {
@@ -255,18 +270,13 @@ final class ShelfContextMenu: NSObject {
         return false
     }
 
-    /// Puts the items on the clipboard, like ⌘C in Finder: paste files into a Finder
-    /// window to copy them there or into Mail to attach them; paste text or a link
-    /// anywhere you can type.
     @objc private func copyItems() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects(targets.map { $0.pasteboardWriter })
+        Self.copy(targets)
     }
 
-    @objc private func openLinks() {
-        for case .link(let url, _) in targets.map({ $0.content }) {
-            NSWorkspace.shared.open(url)
+    @objc private func openItems() {
+        if !Self.open(targets) {
+            NSSound.beep()
         }
     }
 
@@ -274,8 +284,48 @@ final class ShelfContextMenu: NSObject {
         NSWorkspace.shared.activateFileViewerSelecting(targets.compactMap { $0.fileURL })
     }
 
+    @objc private func stackItems() {
+        viewModel.stack(targets.map { $0.id })
+    }
+
+    @objc private func unstackItems() {
+        viewModel.unstack(targets.map { $0.id })
+    }
+
     @objc private func removeItems() {
         viewModel.remove(Set(targets.map { $0.id }))
+    }
+
+    // MARK: - Shared with the keyboard
+
+    /// Puts the items on the clipboard, like ⌘C in Finder: paste files into a Finder
+    /// window to copy them there or into Mail to attach them; paste text or a link
+    /// anywhere you can type.
+    static func copy(_ items: [ShelfItem]) {
+        guard !items.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects(items.map { $0.pasteboardWriter })
+    }
+
+    /// Opens files in their default apps and links in the browser, like double-clicking
+    /// them in Finder. Text has nothing to open it with. Returns false if nothing opened.
+    @discardableResult
+    static func open(_ items: [ShelfItem]) -> Bool {
+        var opened = false
+        for item in items {
+            switch item.content {
+            case .file(let url), .link(let url, _):
+                opened = NSWorkspace.shared.open(url) || opened
+            case .text:
+                continue
+            }
+        }
+        return opened
+    }
+
+    private static func canOpen(_ item: ShelfItem) -> Bool {
+        if case .text = item.content { false } else { true }
     }
 
     // MARK: - Shelf commands

@@ -25,6 +25,7 @@ final class ShelfArchive {
         var text: String? = nil
         var link: String? = nil
         var title: String? = nil
+        var stackID: UUID? = nil
     }
 
     private let fileURL = URL.applicationSupportDirectory.appending(path: "Stow/Shelf.plist")
@@ -64,11 +65,11 @@ final class ShelfArchive {
         switch item.content {
         case .file(let url):
             guard let bookmark = bookmark(for: item.id, url: url) else { return nil }
-            return Record(id: item.id, kind: .file, bookmark: bookmark)
+            return Record(id: item.id, kind: .file, bookmark: bookmark, stackID: item.stackID)
         case .text(let text):
-            return Record(id: item.id, kind: .text, text: text)
+            return Record(id: item.id, kind: .text, text: text, stackID: item.stackID)
         case .link(let url, let title):
-            return Record(id: item.id, kind: .link, link: url.absoluteString, title: title)
+            return Record(id: item.id, kind: .link, link: url.absoluteString, title: title, stackID: item.stackID)
         }
     }
 
@@ -111,13 +112,13 @@ final class ShelfArchive {
             if !isStale {
                 bookmarkCache[record.id] = (url, bookmark)
             }
-            return ShelfItem(id: record.id, content: .file(url), isStowCopy: PromisedFileStore().owns(url))
+            return ShelfItem(id: record.id, content: .file(url), isStowCopy: PromisedFileStore().owns(url), stackID: record.stackID)
         case .text:
             guard let text = record.text else { return nil }
-            return ShelfItem(id: record.id, content: .text(text))
+            return ShelfItem(id: record.id, content: .text(text), stackID: record.stackID)
         case .link:
             guard let string = record.link, let url = URL(string: string) else { return nil }
-            return ShelfItem(id: record.id, content: .link(url, title: record.title))
+            return ShelfItem(id: record.id, content: .link(url, title: record.title), stackID: record.stackID)
         }
     }
 }
