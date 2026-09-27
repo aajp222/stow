@@ -13,15 +13,21 @@ struct ShelfItem: Identifiable, Equatable {
 
     let id: UUID
     let content: Content
-    /// True when the file arrived as a file promise (a screenshot thumbnail, a Photos
-    /// drag, a Mail attachment...). The source app wrote that file into Stow's
-    /// Promised folder, so it's Stow's copy and Stow is responsible for cleaning it up.
-    let isPromisedCopy: Bool
+    /// True when the file is Stow's own copy in its Promised folder: it arrived as a
+    /// file promise (a screenshot thumbnail, a Photos drag, a Mail attachment...) or
+    /// was made from the clipboard. Stow is responsible for cleaning those up.
+    let isStowCopy: Bool
 
-    init(content: Content, isPromisedCopy: Bool = false) {
-        self.id = UUID()
+    init(id: UUID = UUID(), content: Content, isStowCopy: Bool = false) {
+        self.id = id
         self.content = content
-        self.isPromisedCopy = isPromisedCopy
+        self.isStowCopy = isStowCopy
+    }
+
+    /// The same item (same id, so it keeps its place and selection) pointing at the
+    /// file's new location after a rename or move.
+    func relocated(to url: URL, isStowCopy: Bool) -> ShelfItem {
+        ShelfItem(id: id, content: .file(url), isStowCopy: isStowCopy)
     }
 
     var fileURL: URL? {

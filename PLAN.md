@@ -23,6 +23,7 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 | When it appears | Whenever a file, folder or file promise is picked up in any app: the drag pasteboard's `changeCount` moved since the last mouse-up *and* the shelf can accept what's on it. Detection polls while the button is held and re-checks if the drag data changes mid-drag. Legacy file types (`NSFilenamesPboardType`, `file://` in `public.url`) count too. Drags that start in Stow itself are ignored. |
 | Where it sits | Drag the shelf by any empty part (header, labels, blank area) to put it anywhere. The spot is saved relative to the display, so it shows up in the same place on whichever display the pointer is on, and it survives relaunches. It grows downward, pushed up if it would run off the bottom. The menu's Reset Shelf Position goes back to automatic: the left or right edge nearest the pointer, vertically centred, clear of the Dock and menu bar. It grows with its items up to 70% of the screen, then scrolls. |
 | Promised files | `~/Library/Application Support/Stow/Promised/<one folder per drop>/`. Moved to the Trash when removed or cleared (10 minutes after a drag-out, so the receiving app can finish reading). Leftovers are trashed at launch. |
+| Right-click menu | On items: Open With ▸ (the default app, the others, and Other…), Share…, Rename… (renames the real file), Move…, Copy (to paste in Finder or Mail), Show in Finder, Remove, Restore Last Removed Files, Add Clipboard Contents to Stow. On empty space: just the last two. macOS adds Ask Siri (macOS 27) and Services ▸ itself; Services works because the list offers its selected files to services. Restore brings back the latest Remove, Clear or drag-out batch, pulling Stow copies back out of the Trash. From the clipboard, files are added as references, and images, links and text are saved as new files (`.png`, `.webloc`, `.txt`) in Stow's folder. |
 | Item model | `ShelfItem.Content` is an enum, so text, links and images slot in as new cases. |
 
 ## Phases
@@ -37,7 +38,7 @@ Menu bar icon (`tray`) with Show Shelf, Clear Shelf and Quit. No Dock icon, no w
 - Drop files and folders (stored as references) or file promises (screenshot thumbnails, Photos, Mail).
 - Quick Look thumbnails and filenames.
 - Drag one or several items out.
-- Right-click menu: Reveal in Finder, Remove.
+- Right-click menu (now the full menu in the table above).
 
 ### Phase 3: Auto-appear on drag ✅ working
 Global and local mouse monitors plus the drag pasteboard check above. The shelf slides in on the pointer's display.

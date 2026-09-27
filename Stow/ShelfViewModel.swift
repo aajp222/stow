@@ -19,6 +19,11 @@ final class ShelfViewModel {
     /// itself as "empty" a moment before the file lands.
     var isReceivingPromises: Bool { !pendingPromises.isEmpty }
 
+    /// The items taken off the shelf most recently, for Restore Last Removed Files.
+    private(set) var lastRemoved: [ShelfItem] = []
+    /// Where trashed Stow copies went in the Trash, so a restore can put them back.
+    @ObservationIgnored private var trashedCopies: [URL: URL] = [:]
+
     @ObservationIgnored private let promisedFiles = PromisedFileStore()
 
     /// File promises call back on this queue once the source app has written the file.
@@ -86,7 +91,88 @@ final class ShelfViewModel {
             NSLog("Stow: a promised file didn't arrive: \(error.localizedDescription)")
             return
         }
-        items.append(ShelfItem(content: .file(fileURL.standardizedFileURL), isPromisedCopy: true))
+        items.append(ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true))
+    }
+
+    /// "Add Clipboard Contents to Stow". Files on the clipboard are added as
+    /// references, like a drop. Anything else (an image, a link, some text) is saved as
+    /// a new file in Stow's own folder, so it can be dragged anywhere a file can.
+    /// Returns false if there was nothing usable on the clipboard.
+    @discardableResult
+    func addClipboardContents() -> Bool {
+        switch ClipboardContents.read() {
+        case .files(let urls):
+            addFiles(urls)
+            return true
+        case .image(let png):
+            return addStowFile(named: "Clipboard Image.png", data: png)
+        case .link(let url):
+            let webloc = try? PropertyListSerialization.data(
+                fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0
+            )
+            guard let webloc else { return false }
+            return addStowFile(named: ClipboardContents.fileName(for: url.host() ?? "Link") + ".webloc", data: webloc)
+        case .text(let text):
+            return addStowFile(named: ClipboardContents.fileName(for: text) + ".txt", data: Data(text.utf8))
+        case nil:
+            return false
+        }
+    }
+
+    private func addStowFile(named name: String, data: Data) -> Bool {
+        do {
+            let url = try promisedFiles.makeDropFolder().appending(path: name)
+            try data.write(to: url)
+            items.append(ShelfItem(content: .file(url.standardizedFileURL), isStowCopy: true))
+            return true
+        } catch {
+            NSLog("Stow: couldn't save the clipboard contents: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    // MARK: - Renaming and moving
+
+    /// Renames the item's file on disk (it's the real file, not just a label) and
+    /// keeps the item pointing at it.
+    func rename(_ id: ShelfItem.ID, to newName: String) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), let url = items[index].fileURL else { return }
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name != url.lastPathComponent else { return }
+        guard !name.isEmpty, !name.contains("/"), !name.contains(":") else {
+            throw ShelfError.invalidName(name)
+        }
+        let destination = url.deletingLastPathComponent().appending(path: name).standardizedFileURL
+        // A change of capitalisation only is the same path on a case-insensitive disk.
+        let caseOnly = destination.path.lowercased() == url.path.lowercased()
+        guard caseOnly || !FileManager.default.fileExists(atPath: destination.path) else {
+            throw ShelfError.alreadyExists(name: name, folder: url.deletingLastPathComponent().lastPathComponent)
+        }
+        try FileManager.default.moveItem(at: url, to: destination)
+        items[index] = items[index].relocated(to: destination, isStowCopy: items[index].isStowCopy)
+    }
+
+    /// Moves items' files into `folder` and keeps the items pointing at them.
+    /// Returns a message for each file that couldn't be moved.
+    func move(_ ids: [ShelfItem.ID], to folder: URL) -> [String] {
+        var problems: [String] = []
+        for id in ids {
+            guard let index = items.firstIndex(where: { $0.id == id }), let url = items[index].fileURL else { continue }
+            let destination = folder.appending(path: url.lastPathComponent).standardizedFileURL
+            guard destination != url else { continue }
+            guard !FileManager.default.fileExists(atPath: destination.path) else {
+                problems.append(ShelfError.alreadyExists(name: url.lastPathComponent, folder: folder.lastPathComponent).localizedDescription)
+                continue
+            }
+            do {
+                try FileManager.default.moveItem(at: url, to: destination)
+                // A Stow copy moved out of Stow's folder is yours now: Stow won't trash it.
+                items[index] = items[index].relocated(to: destination, isStowCopy: promisedFiles.owns(destination))
+            } catch {
+                problems.append(error.localizedDescription)
+            }
+        }
+        return problems
     }
 
     // MARK: - Removing
@@ -96,7 +182,8 @@ final class ShelfViewModel {
     func remove(_ ids: Set<ShelfItem.ID>) {
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
-        trashPromisedCopies(of: removed, after: .zero)
+        rememberRemoved(removed)
+        trashStowCopies(of: removed, after: .zero)
     }
 
     func clear() {
@@ -118,9 +205,48 @@ final class ShelfViewModel {
         let ids = Set(ids)
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
+        rememberRemoved(removed)
         // The app it was dropped into may read the file lazily (a browser upload
         // form, for example), so wait before moving Stow's copy to the Trash.
-        trashPromisedCopies(of: removed, after: .seconds(600))
+        trashStowCopies(of: removed, after: .seconds(600))
+    }
+
+    // MARK: - Restoring
+
+    /// Whether there's something for Restore Last Removed Files to bring back.
+    var canRestoreLastRemoved: Bool { !lastRemoved.isEmpty }
+
+    /// Puts back the items taken off the shelf most recently (by one Remove, Clear,
+    /// or drag out). Stow copies that were already trashed come back out of the
+    /// Trash. Items whose files have since been moved or deleted are skipped.
+    func restoreLastRemoved() {
+        let fileManager = FileManager.default
+        var onShelf = Set(items.compactMap { $0.fileURL })
+        var restored: [ShelfItem] = []
+        for item in lastRemoved {
+            guard let url = item.fileURL, !onShelf.contains(url) else { continue }
+            if !fileManager.fileExists(atPath: url.path), let locationInTrash = trashedCopies[url] {
+                do {
+                    try promisedFiles.putBack(locationInTrash, at: url)
+                } catch {
+                    NSLog("Stow: couldn't restore \(url.lastPathComponent) from the Trash: \(error.localizedDescription)")
+                }
+            }
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            onShelf.insert(url)
+            restored.append(item)
+        }
+        lastRemoved = []
+        trashedCopies = [:]
+        items += restored
+    }
+
+    private func rememberRemoved(_ removed: [ShelfItem]) {
+        guard !removed.isEmpty else { return }
+        lastRemoved = removed
+        // Only the latest batch can be restored, so forget older Trash locations.
+        let urls = Set(removed.compactMap { $0.fileURL })
+        trashedCopies = trashedCopies.filter { urls.contains($0.key) }
     }
 
     /// Trashes files left in the Promised folder by earlier runs. Nothing is saved
@@ -129,15 +255,33 @@ final class ShelfViewModel {
         promisedFiles.trashAll()
     }
 
-    private func trashPromisedCopies(of removed: [ShelfItem], after delay: Duration) {
-        let urls = removed.filter { $0.isPromisedCopy }.compactMap { $0.fileURL }
+    private func trashStowCopies(of removed: [ShelfItem], after delay: Duration) {
+        let urls = removed.filter { $0.isStowCopy }.compactMap { $0.fileURL }
         guard !urls.isEmpty else { return }
-        let store = promisedFiles
-        Task {
+        Task { [weak self] in
             if delay > .zero {
                 try? await Task.sleep(for: delay)
             }
-            store.trash(urls)
+            guard let self else { return }
+            // Skip anything that was restored onto the shelf in the meantime.
+            let onShelf = Set(self.items.compactMap { $0.fileURL })
+            let trashed = self.promisedFiles.trash(urls.filter { !onShelf.contains($0) })
+            self.trashedCopies.merge(trashed) { _, new in new }
+        }
+    }
+}
+
+/// Problems renaming or moving a file, worded for an alert.
+enum ShelfError: LocalizedError {
+    case invalidName(String)
+    case alreadyExists(name: String, folder: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidName(let name):
+            name.isEmpty ? "The name can't be empty." : "“\(name)” can't be used as a name. Names can't contain “/” or “:”."
+        case .alreadyExists(let name, let folder):
+            "An item named “\(name)” already exists in “\(folder)”."
         }
     }
 }

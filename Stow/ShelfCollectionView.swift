@@ -5,8 +5,11 @@ import SwiftUI
 /// items at once, and a callback saying whether the drop succeeded, which SwiftUI's
 /// own drag APIs don't provide.
 final class ShelfCollectionView: NSCollectionView {
-    /// Builds the right-click menu for the current selection. Set by ShelfViewController.
-    var contextMenuProvider: () -> NSMenu? = { nil }
+    /// Builds the right-click menu: for the selected items when `onItem` is true,
+    /// otherwise for the shelf itself. Set by ShelfViewController.
+    var contextMenuProvider: (_ onItem: Bool) -> NSMenu? = { _ in nil }
+    /// The selected items' files, offered to the Services menu. Set by ShelfViewController.
+    var selectedFileURLs: () -> [URL] = { [] }
     /// The user dragged the shelf by an empty part of the list.
     var onWindowMoved: () -> Void = {}
 
@@ -52,12 +55,38 @@ final class ShelfCollectionView: NSCollectionView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let indexPath = indexPathForItem(at: point) else { return nil }
+        guard let indexPath = indexPathForItem(at: point) else {
+            deselectAll(nil)
+            return contextMenuProvider(false)
+        }
         // Right-clicking an item that isn't selected selects just that item, like Finder.
         if !selectionIndexPaths.contains(indexPath) {
             selectionIndexPaths = [indexPath]
         }
-        return contextMenuProvider()
+        return contextMenuProvider(true)
+    }
+
+    // MARK: - Services
+
+    /// AppKit asks this when it builds a right-click menu: "can you send data of this
+    /// type to a service?" Answering yes for file URLs while items are selected makes
+    /// macOS add the Services submenu, listing the services that work on files.
+    /// (AppDelegate registers `.fileURL` as a type Stow can send.)
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
+        if sendType == .fileURL, returnType == nil, !selectedFileURLs().isEmpty {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+}
+
+extension ShelfCollectionView: NSServicesMenuRequestor {
+    /// When you pick a service, AppKit calls this to get the selected files.
+    func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        let urls = selectedFileURLs()
+        guard !urls.isEmpty, types.contains(.fileURL) else { return false }
+        pboard.clearContents()
+        return pboard.writeObjects(urls as [NSURL])
     }
 }
 

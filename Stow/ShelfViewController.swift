@@ -44,6 +44,9 @@ final class ShelfViewController: NSViewController {
     private let emptyState = NSStackView()
     private let highlightView = NSView()
 
+    /// Builds the right-click menus and runs their commands.
+    private lazy var contextMenus = ShelfContextMenu(viewModel: viewModel)
+
     /// The snapshot of `viewModel.items` the collection view is currently showing.
     private var displayedItems: [ShelfItem] = []
     private var draggedItemIDs: [ShelfItem.ID] = []
@@ -144,6 +147,7 @@ final class ShelfViewController: NSViewController {
         glassView.cornerRadius = ShelfLayout.cornerRadius
         let content = ShelfContentView()
         content.onMoved = { [weak self] in self?.onMoved() }
+        content.menuProvider = { [weak self] in self?.contextMenus.menu(for: []) }
         content.translatesAutoresizingMaskIntoConstraints = false
         glassView.contentView = content
         return content
@@ -190,7 +194,13 @@ final class ShelfViewController: NSViewController {
         collectionView.register(ShelfItemCell.self, forItemWithIdentifier: ShelfItemCell.identifier)
         collectionView.dataSource = self
         collectionView.delegate = self
-        collectionView.contextMenuProvider = { [weak self] in self?.makeContextMenu() }
+        collectionView.contextMenuProvider = { [weak self] onItem in
+            guard let self else { return nil }
+            return self.contextMenus.menu(for: onItem ? self.selectedItems : [])
+        }
+        collectionView.selectedFileURLs = { [weak self] in
+            self?.selectedItems.compactMap { $0.fileURL } ?? []
+        }
         collectionView.onWindowMoved = { [weak self] in self?.onMoved() }
         collectionView.autoresizingMask = [.width]
 
@@ -278,24 +288,6 @@ final class ShelfViewController: NSViewController {
         onHide()
     }
 
-    private func makeContextMenu() -> NSMenu {
-        let menu = NSMenu()
-        let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(revealSelection), keyEquivalent: "")
-        reveal.target = self
-        menu.addItem(reveal)
-        let remove = NSMenuItem(title: "Remove", action: #selector(removeSelection), keyEquivalent: "")
-        remove.target = self
-        menu.addItem(remove)
-        return menu
-    }
-
-    @objc private func revealSelection() {
-        NSWorkspace.shared.activateFileViewerSelecting(selectedItems.compactMap { $0.fileURL })
-    }
-
-    @objc private func removeSelection() {
-        viewModel.remove(Set(selectedItems.map { $0.id }))
-    }
 }
 
 // MARK: - NSCollectionViewDataSource
@@ -350,6 +342,8 @@ extension ShelfViewController: NSCollectionViewDelegateFlowLayout {
 /// around by any part that isn't an item or the hide button.
 private final class ShelfContentView: NSView {
     var onMoved: () -> Void = {}
+    /// The right-click menu for the shelf itself (not an item).
+    var menuProvider: () -> NSMenu? = { nil }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
@@ -370,6 +364,10 @@ private final class ShelfContentView: NSView {
         if window?.followMouseDrag() == true {
             onMoved()
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuProvider()
     }
 }
 

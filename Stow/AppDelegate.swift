@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel.trashLeftoverPromisedFiles()
         setUpStatusItem()
+        // Tell AppKit that Stow can hand file URLs to services, so right-clicking
+        // shelf items gets a Services submenu (see ShelfCollectionView).
+        NSApp.registerServicesMenuSendTypes([.fileURL], returnTypes: [])
 
         dragMonitor.onFileDragBegan = { [weak self] point in self?.shelf.fileDragBegan(at: point) }
         dragMonitor.onFileDragEnded = { [weak self] in self?.shelf.dragEnded() }
