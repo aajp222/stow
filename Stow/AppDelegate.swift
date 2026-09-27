@@ -16,15 +16,21 @@ struct StowMain {
     }
 }
 
-/// Owns the menu bar icon and its menu.
+/// Owns the menu bar icon, the shelf, and the pieces that connect them.
 ///
 /// There is no Dock icon and no main window: `INFOPLIST_KEY_LSUIElement = YES` in the
 /// target's build settings writes `LSUIElement` into the generated Info.plist, which
 /// makes macOS treat Stow as an "agent" app.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let viewModel = ShelfViewModel()
+    private lazy var shelf = ShelfPanelController(viewModel: viewModel)
+
     private var statusItem: NSStatusItem?
+    private var toggleShelfItem: NSMenuItem?
+    private var clearShelfItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        viewModel.trashLeftoverPromisedFiles()
         setUpStatusItem()
     }
 
@@ -36,8 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image = NSImage(systemSymbolName: "tray", accessibilityDescription: "Stow")
 
         let menu = NSMenu()
-        menu.addItem(makeItem("Show Shelf", action: #selector(toggleShelf)))
-        menu.addItem(makeItem("Clear Shelf", action: #selector(clearShelf)))
+        menu.delegate = self
+        // We set each item's enabled state ourselves in menuNeedsUpdate.
+        menu.autoenablesItems = false
+
+        let toggle = makeItem("Show Shelf", action: #selector(toggleShelf))
+        menu.addItem(toggle)
+        let clear = makeItem("Clear Shelf", action: #selector(clearShelf))
+        menu.addItem(clear)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Stow", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
@@ -45,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+        toggleShelfItem = toggle
+        clearShelfItem = clear
     }
 
     private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
@@ -53,13 +67,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    /// Called just before the menu opens, so its titles always match the current state.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        toggleShelfItem?.title = shelf.isShown ? "Hide Shelf" : "Show Shelf"
+        clearShelfItem?.isEnabled = !viewModel.items.isEmpty
+    }
+
     // MARK: - Actions
 
     @objc private func toggleShelf() {
-        // Phase 2 adds the shelf.
+        shelf.toggle()
     }
 
     @objc private func clearShelf() {
-        // Phase 2 adds the shelf.
+        viewModel.clear()
     }
 }

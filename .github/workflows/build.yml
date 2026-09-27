@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select newest Xcode
         run: |
@@ -21,4 +21,4 @@ jobs:
       - name: Build
         run: |
           xcodebuild -project Stow.xcodeproj -target Stow -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO -quiet build
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO -quiet build
