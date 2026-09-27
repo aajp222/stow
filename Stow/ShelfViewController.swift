@@ -370,7 +370,7 @@ final class ShelfViewController: NSViewController {
         emptyState.isHidden = !rows.isEmpty
         let noMatches = !viewModel.items.isEmpty
         emptyIcon.image = NSImage(systemSymbolName: noMatches ? "magnifyingglass" : "tray.and.arrow.down", accessibilityDescription: nil)
-        emptyLabel.stringValue = noMatches ? "No matches" : "Drop files here"
+        emptyLabel.stringValue = noMatches ? "No matches" : "Stow files here"
     }
 
     /// The selected rows, top to bottom.

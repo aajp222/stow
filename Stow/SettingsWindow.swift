@@ -38,6 +38,14 @@ final class SettingsWindowController {
 struct SettingsView: View {
     @Bindable var settings: AppSettings
 
+    /// The version from the app's Info.plist, such as "1.2 (1)".
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = info?["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
+    }
+
     var body: some View {
         Form {
             Section {
@@ -89,7 +97,7 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Remove items after dragging them out", isOn: $settings.removeAfterDrag)
-                Toggle("Stack files dropped together", isOn: $settings.stackDroppedFiles)
+                Toggle("Stack files stowed together", isOn: $settings.stackDroppedFiles)
                 Stepper(value: $settings.visibleItemLimit, in: AppSettings.visibleItemRange) {
                     LabeledContent("Items shown before scrolling", value: "\(settings.visibleItemLimit)")
                 }
@@ -103,6 +111,26 @@ struct SettingsView: View {
                 Text("Shelf")
             } footer: {
                 Text("Drag the shelf by an empty spot to put it anywhere. Reset Shelf Position in the menu bar docks it again. Drag an item away from the shelf and let go where nothing takes it to remove it.")
+            }
+
+            Section {
+                HStack(spacing: 12) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stow")
+                            .font(.headline)
+                        Text("Version \(Self.version)")
+                            .foregroundStyle(.secondary)
+                        Text("Made by Aaryan Panchal")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            } header: {
+                Text("About")
             }
         }
         .formStyle(.grouped)
