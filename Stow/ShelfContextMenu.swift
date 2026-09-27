@@ -27,27 +27,44 @@ final class ShelfContextMenu: NSObject {
         // Each item's enabled state is set by hand below.
         menu.autoenablesItems = false
 
-        let urls = items.compactMap { $0.fileURL }
-        if !urls.isEmpty {
-            let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-            openWith.submenu = makeOpenWithMenu(for: urls)
-            menu.addItem(openWith)
+        if !items.isEmpty {
+            // File commands only make sense when every selected item is a file.
+            let urls = items.compactMap { $0.fileURL }
+            let allFiles = urls.count == items.count
+            let allLinks = items.allSatisfy { if case .link = $0.content { true } else { false } }
+
+            if allFiles {
+                let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+                openWith.submenu = makeOpenWithMenu(for: urls)
+                menu.addItem(openWith)
+            } else if allLinks {
+                menu.addItem(makeItem(items.count == 1 ? "Open Link" : "Open Links", #selector(openLinks)))
+            }
 
             // The standard Share… item; choosing it shows the system share menu.
-            let picker = NSSharingServicePicker(items: urls)
+            let picker = NSSharingServicePicker(items: items.map { $0.shareableValue })
             sharePicker = picker
             menu.addItem(picker.standardShareMenuItem)
 
-            menu.addItem(makeItem("Rename…", #selector(renameItem), enabled: urls.count == 1))
-            menu.addItem(makeItem("Move…", #selector(moveItems)))
-            menu.addItem(makeItem("Copy", #selector(copyFiles)))
-            menu.addItem(makeItem("Show in Finder", #selector(showInFinder)))
+            if allFiles {
+                menu.addItem(makeItem("Rename…", #selector(renameItem), enabled: urls.count == 1))
+                menu.addItem(makeItem("Move…", #selector(moveItems)))
+            }
+            menu.addItem(makeItem("Copy", #selector(copyItems)))
+            if allFiles {
+                menu.addItem(makeItem("Show in Finder", #selector(showInFinder)))
+            }
             menu.addItem(.separator())
             menu.addItem(makeItem("Remove", #selector(removeItems)))
             menu.addItem(.separator())
         }
         menu.addItem(makeItem("Restore Last Removed Files", #selector(restoreLastRemoved), enabled: viewModel.canRestoreLastRemoved))
-        menu.addItem(makeItem("Add Clipboard Contents to Stow", #selector(addClipboardContents), enabled: ClipboardContents.isAvailable()))
+        menu.addItem(makeItem(
+            "Add Clipboard Contents to Stow",
+            #selector(addClipboardContents),
+            // Checks only what kinds of data are on the clipboard, without reading it.
+            enabled: PasteboardContents.offersAcceptedTypes(.general)
+        ))
         return menu
     }
 
@@ -162,12 +179,19 @@ final class ShelfContextMenu: NSObject {
         }
     }
 
-    /// Puts the files on the clipboard, like ⌘C in Finder: paste into a Finder
-    /// window to copy them there, or into Mail to attach them.
-    @objc private func copyFiles() {
+    /// Puts the items on the clipboard, like ⌘C in Finder: paste files into a Finder
+    /// window to copy them there or into Mail to attach them; paste text or a link
+    /// anywhere you can type.
+    @objc private func copyItems() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects(targets.compactMap { $0.fileURL as NSURL? })
+        pasteboard.writeObjects(targets.map { $0.pasteboardWriter })
+    }
+
+    @objc private func openLinks() {
+        for case .link(let url, _) in targets.map({ $0.content }) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func showInFinder() {

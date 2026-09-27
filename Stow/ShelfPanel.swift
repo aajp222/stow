@@ -34,6 +34,10 @@ final class ShelfPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
 
+        // Only become the key window when something asks for it explicitly (clicking
+        // an item does; see ShelfCollectionView), never just because it was clicked.
+        becomesKeyOnlyIfNeeded = true
+
         isMovable = false
         isReleasedWhenClosed = false
         // ShelfPanelController runs its own slide animation.
@@ -45,9 +49,12 @@ final class ShelfPanel: NSPanel {
     // part of the shelf. `isMovable = false` only stops the window server from
     // moving the window on its own; moving it from code still works.
 
-    // A borderless window can't become the key window, and that's deliberate:
-    // becoming key would take keyboard focus from the app you're typing in. Phase 4's
-    // spacebar Quick Look will revisit this.
+    /// A borderless window normally can't become the key window (the one that gets
+    /// keystrokes). The shelf needs to for Space (Quick Look) and Delete. Because it's
+    /// a non-activating panel, becoming key doesn't make Stow the active app.
+    override var canBecomeKey: Bool {
+        true
+    }
 }
 
 extension NSWindow {

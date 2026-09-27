@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 /// Entry point. Stow is a plain AppKit app with no SwiftUI `App` and no storyboard,
 /// so we create the application and its delegate ourselves.
@@ -22,9 +23,13 @@ struct StowMain {
 /// target's build settings writes `LSUIElement` into the generated Info.plist, which
 /// makes macOS treat Stow as an "agent" app.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let viewModel = ShelfViewModel()
-    private lazy var shelf = ShelfPanelController(viewModel: viewModel)
+    private let settings = AppSettings()
+    private lazy var viewModel = ShelfViewModel(settings: settings)
+    private lazy var shelf = ShelfPanelController(viewModel: viewModel, settings: settings)
+    private lazy var settingsWindow = SettingsWindowController(settings: settings)
     private let dragMonitor = DragMonitor()
+    private var autosave: ShelfAutosave?
+    private var hotKey: HotKey?
 
     private var statusItem: NSStatusItem?
     private var toggleShelfItem: NSMenuItem?
@@ -32,15 +37,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var resetPositionItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Put back what was on the shelf at the last quit, then clean up Stow's own
+        // copies that are no longer on it, and save from now on.
+        let archive = ShelfArchive()
+        viewModel.loadSaved(archive.load())
         viewModel.trashLeftoverPromisedFiles()
+        autosave = ShelfAutosave(viewModel: viewModel, archive: archive)
+
         setUpStatusItem()
         // Tell AppKit that Stow can hand file URLs to services, so right-clicking
         // shelf items gets a Services submenu (see ShelfCollectionView).
         NSApp.registerServicesMenuSendTypes([.fileURL], returnTypes: [])
 
-        dragMonitor.onFileDragBegan = { [weak self] point in self?.shelf.fileDragBegan(at: point) }
-        dragMonitor.onFileDragEnded = { [weak self] in self?.shelf.dragEnded() }
+        dragMonitor.onDragBegan = { [weak self] point in self?.shelf.dragBegan(at: point) }
+        dragMonitor.onDragEnded = { [weak self] in self?.shelf.dragEnded() }
+        dragMonitor.waitsForScreenEdge = { [weak self] in self?.settings.showOnlyAtScreenEdge ?? false }
         dragMonitor.start()
+
+        // ⌃⌥S shows or hides the shelf from anywhere.
+        hotKey = HotKey(keyCode: kVK_ANSI_S, modifiers: controlKey | optionKey) { [weak self] in
+            self?.shelf.toggle()
+        }
+        if hotKey == nil {
+            NSLog("Stow: couldn't register ⌃⌥S; another app may be using it.")
+        }
+
+        // A shelf with items stays on screen, so bring it back after a relaunch.
+        if !viewModel.items.isEmpty {
+            shelf.show(on: ShelfPanelController.screenWithMouse())
+        }
     }
 
     // MARK: - Menu bar
@@ -62,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let clear = makeItem("Clear Shelf", action: #selector(clearShelf))
         menu.addItem(clear)
         menu.addItem(.separator())
+        menu.addItem(makeItem("Settings…", action: #selector(showSettings), keyEquivalent: ","))
         let quit = NSMenuItem(title: "Quit Stow", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
@@ -73,8 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         resetPositionItem = resetPosition
     }
 
-    private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    private func makeItem(_ title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
         return item
     }
@@ -99,5 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func clearShelf() {
         viewModel.clear()
+    }
+
+    @objc private func showSettings() {
+        settingsWindow.show()
     }
 }

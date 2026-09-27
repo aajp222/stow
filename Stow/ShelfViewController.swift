@@ -13,8 +13,9 @@ enum ShelfLayout {
     static let sectionInset = NSEdgeInsets(top: 2, left: 8, bottom: 8, right: 8)
     static let emptyHeight: CGFloat = 150
 
-    /// Height that fits `itemCount` items without scrolling. The panel caps this at
-    /// 70% of the screen and the list scrolls beyond that.
+    /// Height that fits `itemCount` items without scrolling. The panel passes at most
+    /// the "Items shown before scrolling" setting, caps the result at 70% of the
+    /// screen, and the list scrolls beyond that.
     static func contentHeight(itemCount: Int) -> CGFloat {
         guard itemCount > 0 else { return emptyHeight }
         let count = CGFloat(itemCount)
@@ -69,9 +70,8 @@ final class ShelfViewController: NSViewController {
             guard let self, let source = info.draggingSource as? NSView else { return true }
             return source !== self.collectionView
         }
-        dropView.onDrop = { [weak self] fileURLs, promises in
-            self?.viewModel.addFiles(fileURLs)
-            self?.viewModel.receive(promises)
+        dropView.onDrop = { [weak self] incoming in
+            self?.viewModel.add(incoming)
         }
         dropView.onTargetedChange = { [weak self] isTargeted in
             self?.setDropTargeted(isTargeted)
@@ -202,6 +202,10 @@ final class ShelfViewController: NSViewController {
             self?.selectedItems.compactMap { $0.fileURL } ?? []
         }
         collectionView.onWindowMoved = { [weak self] in self?.onMoved() }
+        collectionView.onDeleteKey = { [weak self] in
+            guard let self else { return }
+            self.viewModel.remove(Set(self.selectedItems.map { $0.id }))
+        }
         collectionView.autoresizingMask = [.width]
 
         scrollView.documentView = collectionView
@@ -262,6 +266,7 @@ final class ShelfViewController: NSViewController {
     private func reload() {
         // Keep the same items selected across the reload.
         let selectedIDs = Set(selectedItems.map { $0.id })
+        let previousIDs = Set(displayedItems.map { $0.id })
         displayedItems = viewModel.items
         collectionView.reloadData()
         collectionView.selectionIndexPaths = Set(
@@ -274,6 +279,12 @@ final class ShelfViewController: NSViewController {
         titleLabel.stringValue = count == 0 ? "Stow" : (count == 1 ? "1 item" : "\(count) items")
         emptyState.isHidden = count > 0
         onContentChanged()
+
+        // New items go at the end. Once the list scrolls, scroll down to the newest
+        // one so you can see what you just added.
+        if let newest = displayedItems.lastIndex(where: { !previousIDs.contains($0.id) }), !previousIDs.isEmpty {
+            collectionView.scrollToItems(at: [IndexPath(item: newest, section: 0)], scrollPosition: .bottom)
+        }
     }
 
     private var selectedItems: [ShelfItem] {
@@ -320,9 +331,10 @@ extension ShelfViewController: NSCollectionViewDelegateFlowLayout {
 
     /// What goes on the drag pasteboard for each item. NSCollectionView calls this
     /// once per dragged item, which is how several selected items drag together.
-    /// A file URL is what Finder, Mail, browsers and most other apps accept.
+    /// Files go as file URLs, text as text and links as web URLs (see
+    /// ShelfItem.pasteboardWriter).
     func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
-        displayedItems[indexPath.item].fileURL as NSURL?
+        displayedItems[indexPath.item].pasteboardWriter
     }
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {

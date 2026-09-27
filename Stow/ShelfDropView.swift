@@ -1,66 +1,20 @@
 import AppKit
 
-/// The shelf's root view and its drop target. It covers the whole shelf, so files can
-/// be dropped anywhere on it, including on the empty state.
+/// The shelf's root view and its drop target. It covers the whole shelf, so things
+/// can be dropped anywhere on it, including on the empty state.
 final class ShelfDropView: NSView {
-    /// The list of file paths that older apps put on the pasteboard instead of
-    /// file URLs. Some apps still do.
-    static let legacyFilenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-
-    /// Pasteboard types that on their own mean "this drag carries files": file URLs
-    /// (modern and legacy), plus all the types a file promise can arrive as.
-    static let fileTypes: Set<NSPasteboard.PasteboardType> = Set(
-        [.fileURL, legacyFilenamesType]
-        + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
-    )
-
-    /// Everything the drop target listens for. A plain `public.url` can hold a file
-    /// URL too, but it's often a web link, so `carriesFiles` looks inside those.
-    static let acceptedTypes: [NSPasteboard.PasteboardType] = Array(fileTypes) + [.URL]
-
-    /// What to turn each dragged item into, in order of preference. A promise wins
-    /// when an item offers both: the URL alongside a promise can point at a temporary
-    /// file that disappears once the drag ends.
-    private static let readableClasses: [AnyClass] = [NSFilePromiseReceiver.self, NSURL.self]
-    /// Only accept `file://` URLs, not web links (those come in Phase 4).
-    private static let readingOptions: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-
-    /// Whether a drag carries files, judged from the pasteboard's list of *types*
-    /// alone, without reading any data. DragMonitor uses this.
-    ///
-    /// DragMonitor looks at the drag pasteboard while another app owns the drag. Since
-    /// macOS 26, reading pasteboard *data* when the user isn't pasting or dropping it
-    /// is blocked (or makes macOS ask "Allow Stow to paste?"). Listing the types is
-    /// still allowed.
-    static func offersFileTypes(_ pasteboard: NSPasteboard) -> Bool {
-        guard let types = pasteboard.types else { return false }
-        return !fileTypes.isDisjoint(with: types)
-    }
-
-    /// Whether a drag over the shelf carries anything it can take: files, folders or
-    /// file promises. This one may look inside the data, which is allowed here
-    /// because the user is dragging onto Stow.
-    static func carriesFiles(_ pasteboard: NSPasteboard) -> Bool {
-        guard let types = pasteboard.types else { return false }
-        if types.contains(legacyFilenamesType) { return true }
-        // Cheap check first; only then ask the pasteboard to look inside the data
-        // (to tell a file:// URL from a web link).
-        guard !Set(types).isDisjoint(with: acceptedTypes) else { return false }
-        return pasteboard.canReadObject(forClasses: readableClasses, options: readingOptions)
-    }
-
     var shouldAccept: (NSDraggingInfo) -> Bool = { _ in true }
-    var onDrop: (_ fileURLs: [URL], _ promises: [NSFilePromiseReceiver]) -> Void = { _, _ in }
+    var onDrop: ([IncomingItem]) -> Void = { _ in }
     var onTargetedChange: (Bool) -> Void = { _ in }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        registerForDraggedTypes(Self.acceptedTypes)
+        registerForDraggedTypes(Array(PasteboardContents.acceptedTypes))
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        registerForDraggedTypes(Self.acceptedTypes)
+        registerForDraggedTypes(Array(PasteboardContents.acceptedTypes))
     }
 
     // MARK: - NSDraggingDestination
@@ -84,28 +38,15 @@ final class ShelfDropView: NSView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let objects = sender.draggingPasteboard.readObjects(forClasses: Self.readableClasses, options: Self.readingOptions) ?? []
-        var fileURLs: [URL] = []
-        var promises: [NSFilePromiseReceiver] = []
-        for object in objects {
-            if let promise = object as? NSFilePromiseReceiver {
-                promises.append(promise)
-            } else if let url = object as? URL {
-                fileURLs.append(url)
-            }
-        }
-        if fileURLs.isEmpty, promises.isEmpty,
-           let paths = sender.draggingPasteboard.propertyList(forType: Self.legacyFilenamesType) as? [String] {
-            fileURLs = paths.map { URL(fileURLWithPath: $0) }
-        }
-        guard !fileURLs.isEmpty || !promises.isEmpty else { return false }
-        onDrop(fileURLs, promises)
+        let incoming = PasteboardContents.read(from: sender.draggingPasteboard)
+        guard !incoming.isEmpty else { return false }
+        onDrop(incoming)
         return true
     }
 
     /// The operation to show (and report back to the source) for a drag over the shelf.
     private func operation(for sender: NSDraggingInfo) -> NSDragOperation {
-        guard shouldAccept(sender), Self.carriesFiles(sender.draggingPasteboard) else { return [] }
+        guard shouldAccept(sender), PasteboardContents.offersAcceptedTypes(sender.draggingPasteboard) else { return [] }
         // The shelf keeps a reference (or, for a promise, receives its own copy), so the
         // source always keeps its file: from the source's side this is a copy. Never
         // answer "move", which could make the source delete the original. The fallbacks
