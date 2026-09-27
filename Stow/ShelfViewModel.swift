@@ -85,13 +85,15 @@ final class ShelfViewModel {
     }
 
     /// Adds references to files and folders. Anything already on the shelf is skipped.
+    /// Files already in Stow's own storage (shared through the Share menu, say) are
+    /// Stow copies.
     func addFiles(_ urls: [URL], stackID: UUID? = nil) {
         var seen = Set(items.compactMap { $0.fileURL?.standardizedFileURL })
         var newItems: [ShelfItem] = []
         for url in urls {
             let url = url.standardizedFileURL
             guard seen.insert(url).inserted else { continue }
-            newItems.append(ShelfItem(content: .file(url), stackID: stackID))
+            newItems.append(ShelfItem(content: .file(url), isStowCopy: promisedFiles.owns(url), stackID: stackID))
         }
         items += newItems
     }
@@ -140,13 +142,26 @@ final class ShelfViewModel {
             NSLog("Stow: a promised file didn't arrive: \(error.localizedDescription)")
             return
         }
-        let item = ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true, stackID: stackID)
+        var item = ShelfItem(content: .file(fileURL.standardizedFileURL), isStowCopy: true, stackID: stackID)
         // Join the rest of its stack, if it's part of one that's still on the shelf.
         if let stackID, let last = items.lastIndex(where: { $0.stackID == stackID }) {
+            item.stackName = items[last].stackName
             items.insert(item, at: last + 1)
         } else {
             items.append(item)
         }
+    }
+
+    /// Adds files Stow just made (by a quick action, say) just after `anchorID`'s item,
+    /// or after its whole stack, or at the end.
+    func addStowCopies(_ urls: [URL], after anchorID: ShelfItem.ID?) {
+        let newItems = urls.map { ShelfItem(content: .file($0.standardizedFileURL), isStowCopy: true) }
+        var index = items.endIndex
+        if let anchorID, let anchor = items.firstIndex(where: { $0.id == anchorID }) {
+            let stackID = items[anchor].stackID
+            index = (stackID.flatMap { id in items.lastIndex { $0.stackID == id } } ?? anchor) + 1
+        }
+        items.insert(contentsOf: newItems, at: index)
     }
 
     /// "Add Clipboard Contents to Stow": adds whatever is on the clipboard, the same
@@ -235,6 +250,26 @@ final class ShelfViewModel {
         items = Self.gatherStacks(updated)
     }
 
+    /// Names a stack (every member carries the name). An empty name removes it, and
+    /// the stack shows its item count again.
+    func renameStack(_ stackID: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var updated = items
+        for index in updated.indices where updated[index].stackID == stackID {
+            updated[index].stackName = trimmed.isEmpty ? nil : trimmed
+        }
+        items = updated
+    }
+
+    /// Pins or unpins items (see ShelfItem.isPinned).
+    func setPinned(_ ids: Set<ShelfItem.ID>, _ isPinned: Bool) {
+        var updated = items
+        for index in updated.indices where ids.contains(updated[index].id) {
+            updated[index].isPinned = isPinned
+        }
+        items = updated
+    }
+
     /// Takes items out of their stacks, leaving them where they are.
     func unstack(_ ids: [ShelfItem.ID]) {
         let loose = Set(ids)
@@ -273,8 +308,9 @@ final class ShelfViewModel {
         rememberRemoved(removed)
     }
 
+    /// Clear Shelf: removes everything except pinned items.
     func clear() {
-        remove(Set(items.map { $0.id }))
+        remove(Set(items.filter { !$0.isPinned }.map { $0.id }))
     }
 
     /// Called when a drag *out of* the shelf finishes.
@@ -289,7 +325,8 @@ final class ShelfViewModel {
         let moved = !operation.isDisjoint(with: [.move, .generic])
         guard moved || settings.removeAfterDrag else { return }
 
-        let ids = Set(ids)
+        // Pinned items stay, unless their file was moved away.
+        let ids = Set(ids).filter { id in moved || items.first { $0.id == id }?.isPinned != true }
         let removed = items.filter { ids.contains($0.id) }
         items.removeAll { ids.contains($0.id) }
         rememberRemoved(removed)

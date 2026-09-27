@@ -26,9 +26,17 @@ final class ShelfArchive {
         var link: String? = nil
         var title: String? = nil
         var stackID: UUID? = nil
+        // Optional so shelves saved by older versions still load.
+        var stackName: String? = nil
+        var isPinned: Bool? = nil
     }
 
-    private let fileURL = URL.applicationSupportDirectory.appending(path: "Stow/Shelf.plist")
+    private let fileURL: URL
+
+    /// `fileURL` is where the shelf is saved; tests pass a scratch file.
+    init(fileURL: URL = URL.applicationSupportDirectory.appending(path: "Stow/Shelf.plist")) {
+        self.fileURL = fileURL
+    }
     /// Bookmarks already made, by item, so saving doesn't rebuild them every time.
     private var bookmarkCache: [UUID: (url: URL, data: Data)] = [:]
     /// Files reopened from bookmarks at launch that Stow is currently accessing, keyed
@@ -62,15 +70,20 @@ final class ShelfArchive {
     }
 
     private func record(for item: ShelfItem) -> Record? {
+        var record: Record
         switch item.content {
         case .file(let url):
             guard let bookmark = bookmark(for: item.id, url: url) else { return nil }
-            return Record(id: item.id, kind: .file, bookmark: bookmark, stackID: item.stackID)
+            record = Record(id: item.id, kind: .file, bookmark: bookmark)
         case .text(let text):
-            return Record(id: item.id, kind: .text, text: text, stackID: item.stackID)
+            record = Record(id: item.id, kind: .text, text: text)
         case .link(let url, let title):
-            return Record(id: item.id, kind: .link, link: url.absoluteString, title: title, stackID: item.stackID)
+            record = Record(id: item.id, kind: .link, link: url.absoluteString, title: title)
         }
+        record.stackID = item.stackID
+        record.stackName = item.stackName
+        record.isPinned = item.isPinned ? true : nil
+        return record
     }
 
     private func bookmark(for id: UUID, url: URL) -> Data? {
@@ -83,6 +96,14 @@ final class ShelfArchive {
     }
 
     private func item(from record: Record) -> ShelfItem? {
+        guard var item = content(from: record) else { return nil }
+        item.stackID = record.stackID
+        item.stackName = record.stackName
+        item.isPinned = record.isPinned ?? false
+        return item
+    }
+
+    private func content(from record: Record) -> ShelfItem? {
         switch record.kind {
         case .file:
             guard let bookmark = record.bookmark else { return nil }
@@ -112,13 +133,13 @@ final class ShelfArchive {
             if !isStale {
                 bookmarkCache[record.id] = (url, bookmark)
             }
-            return ShelfItem(id: record.id, content: .file(url), isStowCopy: PromisedFileStore().owns(url), stackID: record.stackID)
+            return ShelfItem(id: record.id, content: .file(url), isStowCopy: PromisedFileStore().owns(url))
         case .text:
             guard let text = record.text else { return nil }
-            return ShelfItem(id: record.id, content: .text(text), stackID: record.stackID)
+            return ShelfItem(id: record.id, content: .text(text))
         case .link:
             guard let string = record.link, let url = URL(string: string) else { return nil }
-            return ShelfItem(id: record.id, content: .link(url, title: record.title), stackID: record.stackID)
+            return ShelfItem(id: record.id, content: .link(url, title: record.title))
         }
     }
 }

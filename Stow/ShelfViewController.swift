@@ -69,6 +69,8 @@ final class ShelfViewController: NSViewController {
     private var expandedStacks: Set<UUID> = []
     /// What you've typed to filter the shelf by name.
     private var filter = ""
+    /// Where a reorder drag would currently land, to tap the trackpad as it changes.
+    private var lastInsertionIndex: Int?
 
     /// How many rows the list has, which sets the panel's height.
     var rowCount: Int { rows.count }
@@ -152,6 +154,7 @@ final class ShelfViewController: NSViewController {
     private func configureDropView() {
         dropView.onDrop = { [weak self] incoming in
             self?.viewModel.add(incoming)
+            Self.tap(.levelChange)
         }
         dropView.onTargetedChange = { [weak self] isTargeted in
             self?.setDropTargeted(isTargeted)
@@ -163,12 +166,21 @@ final class ShelfViewController: NSViewController {
         }
         dropView.onInternalMove = { [weak self] point in self?.internalDragMoved(to: point) }
         dropView.onInternalDrop = { [weak self] point in self?.internalDrop(at: point) ?? false }
-        dropView.onInternalEnd = { [weak self] in self?.insertionIndicator.isHidden = true }
+        dropView.onInternalEnd = { [weak self] in
+            self?.insertionIndicator.isHidden = true
+            self?.lastInsertionIndex = nil
+        }
 
         dragSource.onEnded = { [weak self] ids, operation, endPoint, droppedOnShelf in
             self?.dragEnded(ids: ids, operation: operation, at: endPoint, droppedOnShelf: droppedOnShelf)
         }
         dragSource.shelfFrame = { [weak self] in self?.flickSafeFrame ?? .zero }
+        // A tap as dragged items reach the point where letting go removes them.
+        dragSource.onFlickZoneChange = { inZone in
+            if inZone {
+                Self.tap(.generic)
+            }
+        }
     }
 
     /// Sets up the Liquid Glass background (macOS 26's `NSGlassEffectView`) and puts
@@ -610,6 +622,12 @@ final class ShelfViewController: NSViewController {
     private func internalDragMoved(to windowPoint: NSPoint) {
         autoscroll(at: windowPoint)
         let index = insertionIndex(at: windowPoint)
+        if index != lastInsertionIndex {
+            if lastInsertionIndex != nil {
+                Self.tap(.alignment)
+            }
+            lastInsertionIndex = index
+        }
         let y: CGFloat
         if index < rows.count, let frame = rowFrame(at: index) {
             y = frame.minY - ShelfLayout.itemSpacing / 2
@@ -637,6 +655,7 @@ final class ShelfViewController: NSViewController {
         // being moved, or at the end.
         let target = rows[index...].lazy.flatMap { $0.items }.first { !moving.contains($0.id) }
         dragSource.droppedOnShelf = true
+        Self.tap(.levelChange)
         viewModel.reorder(ids, before: target?.id, detaching: dragSource.detachedIDs)
         return true
     }
@@ -653,6 +672,13 @@ final class ShelfViewController: NSViewController {
             index += 1
         }
         return index
+    }
+
+    /// A tap on a Force Touch trackpad. You only feel it with a finger on the
+    /// trackpad, which is the case during a drag; the system setting "Force Click and
+    /// haptic feedback" turns these off.
+    private static func tap(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
     }
 
     private func rowFrame(at index: Int) -> NSRect? {

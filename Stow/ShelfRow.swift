@@ -34,9 +34,20 @@ enum ShelfRow: Equatable {
         if case .member = self { true } else { false }
     }
 
+    /// The name given to a stack with Rename Stack…, if any.
+    var stackName: String? {
+        if case .stack(_, let members) = self { members.first?.stackName } else { nil }
+    }
+
+    /// Whether the row shows a pin: the item is pinned, or any of a stack's items are.
+    var isPinned: Bool {
+        items.contains { $0.isPinned }
+    }
+
     /// Builds the rows for `items`. Stacks in `expanded` are fanned open. A non-empty
     /// `filter` keeps only items whose name contains it; a stack with matching
-    /// members shows those members fanned open.
+    /// members shows those members fanned open, and a stack whose own name matches
+    /// shows all of them.
     static func rows(for items: [ShelfItem], expanded: Set<UUID>, filter: String) -> [ShelfRow] {
         func matches(_ item: ShelfItem) -> Bool {
             filter.isEmpty || item.displayName.localizedStandardContains(filter)
@@ -65,7 +76,8 @@ enum ShelfRow: Equatable {
                 }
                 continue
             }
-            let shown = members.filter(matches)
+            let nameMatches = !filter.isEmpty && (item.stackName?.localizedStandardContains(filter) ?? false)
+            let shown = nameMatches ? members : members.filter(matches)
             guard !shown.isEmpty else { continue }
             rows.append(.stack(id: stackID, members: members))
             if expanded.contains(stackID) || !filter.isEmpty {

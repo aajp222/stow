@@ -369,13 +369,19 @@ final class ShelfItemCell: NSCollectionViewItem {
     /// inside is hidden from VoiceOver, so the row reads as a single element.
     private func updateAccessibility() {
         guard let row else { return }
-        let label = switch row {
+        var label = switch row {
         case .item(let item):
             "\(item.displayName), \(item.kindDescription)"
         case .stack(_, let members):
             "Stack of \(members.count) items, \(isExpanded ? "open" : "closed")"
         case .member(let item, _):
             "\(item.displayName), \(item.kindDescription), in a stack"
+        }
+        if let name = row.stackName {
+            label = "\(name), \(label)"
+        }
+        if row.isPinned {
+            label += ", pinned"
         }
         view.setAccessibilityLabel(label)
         view.setAccessibilityHelp(row.isStack

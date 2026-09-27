@@ -24,19 +24,41 @@ struct ShelfItem: Identifiable, Equatable {
     let isStowCopy: Bool
     /// Items that share a stack ID show as one pile on the shelf (see ShelfRow). Files
     /// dropped together get one, and so do items gathered with Stack Items.
-    var stackID: UUID?
+    var stackID: UUID? {
+        didSet {
+            // A name belongs to one stack; leaving it (or joining another) drops it.
+            if stackID != oldValue {
+                stackName = nil
+            }
+        }
+    }
+    /// The stack's name, if you gave it one with Rename Stack…. Every member of a
+    /// stack carries the same name, so it survives whichever members are removed.
+    var stackName: String?
+    /// Pinned items stay on the shelf through Clear Shelf and after being dragged
+    /// out. Removing one by hand (✕, Remove, Delete) still removes it.
+    var isPinned: Bool
 
-    init(id: UUID = UUID(), content: Content, isStowCopy: Bool = false, stackID: UUID? = nil) {
+    init(
+        id: UUID = UUID(),
+        content: Content,
+        isStowCopy: Bool = false,
+        stackID: UUID? = nil,
+        stackName: String? = nil,
+        isPinned: Bool = false
+    ) {
         self.id = id
         self.content = content
         self.isStowCopy = isStowCopy
         self.stackID = stackID
+        self.stackName = stackID == nil ? nil : stackName
+        self.isPinned = isPinned
     }
 
-    /// The same item (same id, so it keeps its place, stack and selection) pointing at
-    /// the file's new location after a rename or move.
+    /// The same item (same id, so it keeps its place, stack, pin and selection)
+    /// pointing at the file's new location after a rename or move.
     func relocated(to url: URL, isStowCopy: Bool) -> ShelfItem {
-        ShelfItem(id: id, content: .file(url), isStowCopy: isStowCopy, stackID: stackID)
+        ShelfItem(id: id, content: .file(url), isStowCopy: isStowCopy, stackID: stackID, stackName: stackName, isPinned: isPinned)
     }
 
     var fileURL: URL? {

@@ -35,6 +35,9 @@ final class ShelfPanelController {
     private var placement: ShelfPlacement {
         didSet { Self.savePlacement(placement) }
     }
+    /// Set when the shelf was shaken into view: it sits next to this point (the
+    /// pointer, in screen coordinates) instead of at its placement, until it hides.
+    private var pointerAnchor: NSPoint?
     /// Bumped on every show and hide, so a hide animation that finishes late doesn't
     /// remove a panel that was shown again in the meantime.
     private var animationGeneration = 0
@@ -94,6 +97,7 @@ final class ShelfPanelController {
             hide()
         } else {
             edge = dockingEdge(nearestTo: nil, on: nil)
+            pointerAnchor = nil
             show(on: Self.screenWithMouse())
             if focus {
                 viewController.focusList()
@@ -112,7 +116,10 @@ final class ShelfPanelController {
     func show(on screen: NSScreen?) {
         guard let screen = screen ?? NSScreen.main else { return }
         let target = targetFrame(on: screen)
-        if isShown, self.screen?.displayNumber == screen.displayNumber, abs(panel.frame.minX - target.minX) < 1 {
+        // Already on this display: glide over (to the pointer, after a shake) rather
+        // than sliding in again.
+        if isShown, self.screen?.displayNumber == screen.displayNumber,
+           pointerAnchor != nil || abs(panel.frame.minX - target.minX) < 1 {
             animate(to: target)
             return
         }
@@ -142,6 +149,7 @@ final class ShelfPanelController {
     func hide() {
         guard isShown else { return }
         isShown = false
+        pointerAnchor = nil
         animationGeneration += 1
         let generation = animationGeneration
 
@@ -167,12 +175,14 @@ final class ShelfPanelController {
     // MARK: - Following drags
 
     /// A drag started somewhere on the Mac. Bring the shelf to the display the pointer
-    /// is on. If it's already there, it stays put.
-    func dragBegan(at point: NSPoint) {
+    /// is on. If it's already there, it stays put, unless `nearPointer` (the pointer
+    /// was shaken) asks for it right next to the pointer.
+    func dragBegan(at point: NSPoint, nearPointer: Bool = false) {
         dragGeneration += 1
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         edge = dockingEdge(nearestTo: point, on: screen)
+        pointerAnchor = nearPointer ? point : nil
         show(on: screen)
     }
 
@@ -234,6 +244,7 @@ final class ShelfPanelController {
         }
 
         self.screen = screen
+        pointerAnchor = nil
         let spareWidth = visible.width - frame.width
         placement = .custom(
             x: spareWidth > 0 ? (frame.minX - visible.minX) / spareWidth : 0,
@@ -247,6 +258,7 @@ final class ShelfPanelController {
             edge = dockingEdge(nearestTo: NSPoint(x: panel.frame.midX, y: panel.frame.midY), on: screen)
         }
         placement = .automatic
+        pointerAnchor = nil
         if isShown, let screen {
             animate(to: targetFrame(on: screen))
         }
@@ -262,6 +274,19 @@ final class ShelfPanelController {
         // Grow to fit at most `visibleItemLimit` rows; the list scrolls past that.
         let shownRows = min(viewController.rowCount, settings.visibleItemLimit)
         let height = min(ShelfLayout.contentHeight(rowCount: shownRows), visible.height * 0.7).rounded()
+
+        if let anchor = pointerAnchor {
+            // Just right of the pointer (left, if there's no room), centred on it
+            // vertically, and kept on screen.
+            let gap: CGFloat = 32
+            var x = anchor.x + gap
+            if x + width > visible.maxX {
+                x = anchor.x - gap - width
+            }
+            x = min(max(x, visible.minX), visible.maxX - width)
+            let y = min(max(anchor.y - height / 2, visible.minY), visible.maxY - height)
+            return NSRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
+        }
 
         switch placement {
         case .automatic:

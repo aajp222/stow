@@ -6,7 +6,7 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 
 - Swift. AppKit handles windows and drag-and-drop; SwiftUI draws each shelf item.
 - macOS 26+ (changed from 14+ so the shelf can use Liquid Glass).
-- App Sandbox **on** (changed from off, because the App Store requires it). Access to dropped and chosen files is `ENABLE_USER_SELECTED_FILES = readwrite`; security-scoped bookmarks come from `Stow.entitlements`. Menu bar only: `LSUIElement = YES`, so there's no Dock icon.
+- App Sandbox **on** (changed from off, because the App Store requires it). Access to dropped and chosen files is `ENABLE_USER_SELECTED_FILES = readwrite`; security-scoped bookmarks and the App Group shared with the Share extension come from `Stow.entitlements`; outgoing connections (update checks only) from `ENABLE_OUTGOING_NETWORK_CONNECTIONS`. Menu bar only: `LSUIElement = YES`, so there's no Dock icon.
 - No third-party dependencies unless approved.
 - `ShelfViewModel` is the single source of truth for the shelf's items.
 - No permissions. Global *mouse* monitors don't need Accessibility access, and the hotkey uses Carbon `RegisterEventHotKey`, which doesn't need it either.
@@ -30,6 +30,15 @@ Stow is a personal macOS drag-and-drop shelf that lives in the menu bar. It's an
 | Item model | `ShelfItem.Content` is `.file`, `.text` or `.link`. Images that aren't files yet (image data from a drag or the clipboard) are saved as PNGs in Stow's folder and become file items, so they drag out anywhere a file can. One reader (`PasteboardContents`) handles drops and the clipboard, preferring files/promises, then links, then an image, then text. |
 | Keyboard | Clicking an item, or showing the shelf with the shortcut, makes the shelf the key window (it's non-activating, so your app stays active). Then: ↑/↓ move the selection (⇧ extends), → / ← open and close stacks, Return opens (or opens/closes a selected stack), Space toggles Quick Look (Stow activates while it's open, then hands back), ⌘C copies, ⌘A selects all, Delete removes. Typing letters filters by name (the header shows the filter; Delete takes a letter back, Esc clears it, hiding the shelf resets it). Clicks work like Finder: ⌘-click toggles, ⇧-click selects a range, double-click opens. The show/hide shortcut is ⌃⌥S by default; Settings can record another (at least one of ⌘⌃⌥, or an F-key) or turn it off. |
 | Menu bar | The icon is `tray` when the shelf is empty and `tray.full` with the item count next to it when it isn't. The count is a setting. |
+| Pins | Pinned items (right-click → Pin) show a pin and stay through Clear Shelf and after being dragged out. A ⌘-drag (move) still removes them, since the file is no longer where the item points; removing by hand (✕, Remove, Delete, flicking) removes them too. |
+| Stack names | Rename Stack… (on a whole stack) names it; every member carries the name, so it survives removals. The name replaces "N items", VoiceOver reads it, and typing to filter matches it. Taking an item out of a stack drops its name. |
+| Quick actions | Right-click → Quick Actions (files only): Compress (Finder-style zip made with `NSFileCoordinator`'s `.forUploading`, no subprocess), Convert to JPEG/PNG/HEIC (ImageIO; transparency goes on white for JPEG), Make Smaller (longest side 2048 px), Combine into PDF (images and PDF pages, in order). Work runs off the main thread; results are Stow copies inserted after the source (after the whole stack if it's in one). |
+| Haptics | On a Force Touch trackpad: a tap when items land on the shelf, as a reorder crosses rows, and as a drag reaches the flick-off distance. |
+| Shake to summon | "Show the shelf" setting: as soon as you drag (default), when the drag reaches the side of the screen, or when you shake the pointer (3 direction changes of ≥25 pt within a second, sampled at 60 Hz). A shaken shelf appears just right of the pointer (left if no room), until it hides or is dragged. |
+| Screenshots | "Add new screenshots to the shelf" asks for the screenshots folder (Desktop by default) and keeps a security-scoped bookmark to it. A dispatch source on the folder notices new entries; a file counts if it has the `kMDItemIsScreenCapture` extended attribute (language-independent). Screenshots stay where they are (references, not copies). |
+| Share menu | The StowShare app extension (`com.apple.share-services`) copies shared files, images, text and links into the App Group container `2MUHC6TNGW.com.aaryanjigarpanchal.Stow` (`Inbox/<share>/` + `items.json`, assembled under a hidden name and renamed when complete), then opens `stow://inbox` to launch Stow if needed. Stow watches the inbox, moves the files into its Promised folder (so they're Stow copies) and adds everything like a drop. |
+| Welcome | A welcome card with three steps and Open at login opens on first launch; "How to Use Stow" in the menu reopens it. |
+| Updates | Copies without an App Store receipt (`Contents/_MASReceipt`) check GitHub's latest release at most daily (setting, on by default) and via Check for Updates…. A newer version is announced once, then offered in the menu as "Download Stow x.y…", which opens its release page. Needs the outgoing-connections sandbox entitlement. |
 | Accessibility | VoiceOver reads each row as one button: "name, kind" (Finder's kind, such as "PDF document"), "Stack of 3 items, closed", or "…, in a stack". Press opens (or opens/closes a stack); a Remove action removes. Reduce Motion turns off the shelf's slide (it only fades), the puff of smoke, and slide-back after a flick. |
 | Saving | `Shelf.plist` in Stow's sandbox container (`~/Library/Containers/com.aaryanjigarpanchal.Stow/…/Application Support/Stow/`), rewritten on every change. Files are stored as security-scoped bookmarks, so renamed or moved files are still found and the sandbox lets Stow reopen them; missing or trashed files are dropped at launch. Stow copies still on the shelf survive the launch cleanup. A shelf that had items reappears at launch. |
 | Sandbox and files | Dropping a file gives Stow access to that file only. Rename… and Move… also change the folder the file is in, so the first time the sandbox refuses, Stow shows an Open panel asking you to allow that folder. It keeps the access for the session. Removed Stow copies stay put while they can still be restored (the sandbox can't take files back out of the Trash) and go to the Trash when a newer removal replaces them, at least 10 minutes after removal. |
@@ -73,6 +82,9 @@ The shelf's background is an `NSGlassEffectView` (`ShelfViewController.configure
 ### Phase 6: Stacks, reordering, keyboard ✅ built
 Stacks, reordering, the hover ✕ and flicking off, the menu bar count, full keyboard control with type-to-filter, a custom shortcut, and VoiceOver/Reduce Motion support (see the table above). New settings: Stack files dropped together, Show the number of items in the menu bar, and the shortcut recorder.
 
+### Phase 7: Pins, quick actions, shake, screenshots, Share menu, welcome, updates, tests ✅ built
+Everything in the rows above from Pins to Updates, plus unit tests (`StowTests`, Swift Testing) for rows and stacks, reordering, pins and Clear, the archive, settings, version comparison, shake detection and the quick actions. They run on CI (`build.yml`) and with ⌘U in Xcode (shared `Stow` scheme).
+
 ## App Store and TestFlight
 
 Everything the App Store checks is in the project: sandbox, app icon (`Stow/Assets.xcassets/AppIcon.appiconset`, original artwork), `LSApplicationCategoryType` (Productivity), `ITSAppUsesNonExemptEncryption = NO` (`Stow-Info.plist`), a privacy manifest (`Stow/PrivacyInfo.xcprivacy`) and a privacy policy (`PRIVACY.md`). `APPSTORE.md` has the steps (create the app in App Store Connect, Archive → Distribute in Xcode, TestFlight groups) and the texts to paste.
@@ -106,7 +118,15 @@ Bundle ID: `com.aaryanjigarpanchal.Stow`.
 | `SettingsWindow.swift` | The Settings window and its SwiftUI form |
 | `HotKey.swift` | The global show/hide shortcut |
 | `ShortcutRecorder.swift` | The Settings control that records a new shortcut |
-| `Stow.entitlements`, `Stow-Info.plist`, `Stow/PrivacyInfo.xcprivacy` | Sandbox bookmarks entitlement, extra Info.plist keys, privacy manifest |
+| `QuickActions.swift` | Compress, convert, make smaller, combine into PDF |
+| `ScreenshotWatcher.swift` | `FolderWatcher` (a dispatch source on a folder) and the screenshots watcher |
+| `ShareInbox.swift` | Picks up what the Share extension leaves in the App Group inbox |
+| `StowShare/ShareViewController.swift`, `StowShare-Info.plist`, `StowShare.entitlements` | The Share menu extension |
+| `WelcomeWindow.swift` | The welcome card |
+| `UpdateChecker.swift` | Check for Updates via GitHub releases (downloaded copies only) |
+| `Dialog.swift` | Alerts and Open panels for a menu bar app (activate, then hand focus back) |
+| `StowTests/` | Unit tests |
+| `Stow.entitlements`, `Stow-Info.plist`, `Stow/PrivacyInfo.xcprivacy` | Bookmarks and App Group entitlements, extra Info.plist keys (encryption answer, `stow:` URL scheme), privacy manifest |
 | `ShelfViewModel.swift` | The items; adding, removing, receiving promises, reordering, stacking |
 | `ShelfItem.swift` | The item model |
 | `PromisedFileStore.swift` | The Promised folder: create, trash, clean up |

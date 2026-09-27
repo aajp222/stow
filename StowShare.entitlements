@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Sandbox comes from the ENABLE_APP_SANDBOX build setting. The App
+	     Group is the folder the Share extension and Stow both use to pass shared
+	     items across (see ShareViewController.swift). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>2MUHC6TNGW.com.aaryanjigarpanchal.Stow</string>
+	</array>
+</dict>
+</plist>

@@ -15,6 +15,16 @@ struct KeyCombo: Equatable, Codable {
     static let `default` = KeyCombo(keyCode: kVK_ANSI_S, modifiers: controlKey | optionKey, display: "⌃⌥S")
 }
 
+/// What brings the shelf in while you drag something.
+enum ShelfTrigger: String, CaseIterable {
+    /// As soon as anything the shelf can take is picked up.
+    case anyDrag
+    /// Once the drag reaches the left or right side of the screen.
+    case screenEdge
+    /// When you shake the pointer while dragging. The shelf appears next to it.
+    case shake
+}
+
 /// Which side the shelf docks to when it places itself (see ShelfPlacement).
 enum DockEdgePreference: String, CaseIterable {
     /// Whichever side of the screen is nearer the pointer when a drag starts.
@@ -37,18 +47,27 @@ final class AppSettings {
         static let removeAfterDrag = "RemoveAfterDrag"
         static let visibleItemLimit = "VisibleItemLimit"
         static let dockEdge = "DockEdge"
+        /// Replaced by `shelfTrigger`; read once to carry the old choice over.
         static let showOnlyAtScreenEdge = "ShowOnlyAtScreenEdge"
+        static let shelfTrigger = "ShelfTrigger"
         static let stackDroppedFiles = "StackDroppedFiles"
         static let showCountInMenuBar = "ShowCountInMenuBar"
         static let shortcut = "Shortcut"
+        static let stowScreenshots = "StowScreenshots"
+        static let screenshotFolder = "ScreenshotFolderBookmark"
+        static let checkForUpdates = "CheckForUpdates"
+        static let lastUpdateCheck = "LastUpdateCheck"
+        static let hasSeenWelcome = "HasSeenWelcome"
     }
 
     /// The allowed range for "Items shown before scrolling".
     static let visibleItemRange = 1...12
 
-    @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let defaults: UserDefaults
 
-    init() {
+    /// `defaults` is where settings are kept; tests pass a scratch suite.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         defaults.register(defaults: [
             Key.removeAfterDrag: true,
             Key.visibleItemLimit: 4,
@@ -56,6 +75,9 @@ final class AppSettings {
             Key.showOnlyAtScreenEdge: false,
             Key.stackDroppedFiles: true,
             Key.showCountInMenuBar: true,
+            Key.stowScreenshots: false,
+            Key.checkForUpdates: true,
+            Key.hasSeenWelcome: false,
         ])
         loginItemStatus = SMAppService.mainApp.status
     }
@@ -99,16 +121,19 @@ final class AppSettings {
         }
     }
 
-    /// Only bring the shelf in once a drag reaches the left or right side of the
-    /// screen, instead of as soon as anything is picked up.
-    var showOnlyAtScreenEdge: Bool {
+    /// What brings the shelf in during a drag. Versions before this setting had an
+    /// on/off "only at the side of the screen" option, which carries over.
+    var shelfTrigger: ShelfTrigger {
         get {
-            access(keyPath: \.showOnlyAtScreenEdge)
-            return defaults.bool(forKey: Key.showOnlyAtScreenEdge)
+            access(keyPath: \.shelfTrigger)
+            if let stored = defaults.string(forKey: Key.shelfTrigger), let trigger = ShelfTrigger(rawValue: stored) {
+                return trigger
+            }
+            return defaults.bool(forKey: Key.showOnlyAtScreenEdge) ? .screenEdge : .anyDrag
         }
         set {
-            withMutation(keyPath: \.showOnlyAtScreenEdge) {
-                defaults.set(newValue, forKey: Key.showOnlyAtScreenEdge)
+            withMutation(keyPath: \.shelfTrigger) {
+                defaults.set(newValue.rawValue, forKey: Key.shelfTrigger)
             }
         }
     }
@@ -137,6 +162,64 @@ final class AppSettings {
                 defaults.set(newValue, forKey: Key.showCountInMenuBar)
             }
         }
+    }
+
+    // MARK: - Screenshots
+
+    /// Put new screenshots on the shelf as soon as they're saved.
+    var stowScreenshots: Bool {
+        get {
+            access(keyPath: \.stowScreenshots)
+            return defaults.bool(forKey: Key.stowScreenshots)
+        }
+        set {
+            withMutation(keyPath: \.stowScreenshots) {
+                defaults.set(newValue, forKey: Key.stowScreenshots)
+            }
+        }
+    }
+
+    /// The folder screenshots are saved in, as a security-scoped bookmark: the sandbox
+    /// only lets Stow watch a folder you've chosen, and the bookmark keeps that
+    /// permission across relaunches. Set by choosing the folder in Settings.
+    var screenshotFolderBookmark: Data? {
+        get {
+            access(keyPath: \.screenshotFolderBookmark)
+            return defaults.data(forKey: Key.screenshotFolder)
+        }
+        set {
+            withMutation(keyPath: \.screenshotFolderBookmark) {
+                defaults.set(newValue, forKey: Key.screenshotFolder)
+            }
+        }
+    }
+
+    // MARK: - Updates and welcome
+
+    /// Look for a newer version on GitHub once a day (downloaded copies only; the App
+    /// Store updates its own copies).
+    var checkForUpdates: Bool {
+        get {
+            access(keyPath: \.checkForUpdates)
+            return defaults.bool(forKey: Key.checkForUpdates)
+        }
+        set {
+            withMutation(keyPath: \.checkForUpdates) {
+                defaults.set(newValue, forKey: Key.checkForUpdates)
+            }
+        }
+    }
+
+    /// When Stow last looked for an update. Not shown anywhere, so not observed.
+    var lastUpdateCheck: Date? {
+        get { defaults.object(forKey: Key.lastUpdateCheck) as? Date }
+        set { defaults.set(newValue, forKey: Key.lastUpdateCheck) }
+    }
+
+    /// Whether the welcome card has been shown (it opens by itself only once).
+    var hasSeenWelcome: Bool {
+        get { defaults.bool(forKey: Key.hasSeenWelcome) }
+        set { defaults.set(newValue, forKey: Key.hasSeenWelcome) }
     }
 
     // MARK: - Shortcut
