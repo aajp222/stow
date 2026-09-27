@@ -64,7 +64,10 @@ final class ShelfCollectionView: NSCollectionView {
         window.makeKey()
         window.makeFirstResponder(self)
 
-        if let rowFrame = layoutAttributesForItem(at: indexPath)?.frame,
+        // The ✕ only counts while it's showing: if the shelf appeared under a pointer
+        // that hasn't moved since, the corner is just part of the item.
+        if (item(at: indexPath) as? ShelfItemCell)?.showsRemoveButton == true,
+           let rowFrame = layoutAttributesForItem(at: indexPath)?.frame,
            ShelfLayout.removeButtonRect(inRow: rowFrame).contains(point) {
             onRemoveRow(indexPath)
             return
@@ -289,6 +292,8 @@ final class ShelfItemCell: NSCollectionViewItem {
 
     private var row: ShelfRow?
     private var isExpanded = false
+    /// The ✕ shows while the pointer is over the row.
+    var showsRemoveButton: Bool { isHovered }
     private var isHovered = false {
         didSet {
             if isHovered != oldValue {
