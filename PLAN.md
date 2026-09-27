@@ -65,6 +65,7 @@ Drag the shelf anywhere, with the spot remembered and a Reset Shelf Position men
   - Items shown before scrolling (1–12, default 4).
   - Dock to: side nearest the pointer, left side or right side. Dragging the shelf anywhere still works.
   - Only show when a drag reaches the side of the screen.
+  - About: the app icon, version and "Made by Aaryan Panchal".
 
 ### Phase 5: Liquid Glass look ✅ built (done ahead of Phase 4)
 The shelf's background is an `NSGlassEffectView` (`ShelfViewController.configureGlassBackground()`), with 20 pt corners. Everything visible sits inside the glass view's `contentView`. While files hover over the shelf, the glass takes an accent tint.
