@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Stow Lab: the Phase 0 test app (see WINDOWS.md). Throwaway: once Phases 2 and 3
+       have taken what it learned, it gets deleted. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>StowLab</RootNamespace>
+    <AssemblyName>StowLab</AssemblyName>
+    <Version>0.0.1</Version>
+    <!-- Per-monitor DPI awareness; see app.manifest. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!-- When publishing for a specific platform (dotnet publish -r win-x64 / win-arm64):
+       one self-contained .exe that runs without installing .NET. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+</Project>

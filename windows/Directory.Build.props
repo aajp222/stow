@@ -1,0 +1,11 @@
+<Project>
+  <!-- Settings shared by every project under windows/. -->
+  <PropertyGroup>
+    <!-- Lets these Windows-only projects build on a Mac or Linux (for compile checks
+         and for making the .exe). They still only run on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

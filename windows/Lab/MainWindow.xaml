@@ -1,0 +1,57 @@
+<Window x:Class="StowLab.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Stow Lab" Width="820" Height="680" WindowStartupLocation="CenterScreen">
+  <DockPanel Margin="12">
+    <StackPanel DockPanel.Dock="Top">
+      <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+        The Phase 0 test bench for Stow on Windows. Work through the tests in WINDOWS.md (use throwaway files),
+        then press Copy Log and paste it to Claude. The shelf is the small separate window.
+      </TextBlock>
+
+      <WrapPanel>
+        <GroupBox Header="Show the shelf when" Margin="0,0,8,8" Padding="6">
+          <StackPanel>
+            <CheckBox x:Name="EdgeBox" IsChecked="True" Content="a drag reaches the side of the screen"/>
+            <CheckBox x:Name="ShakeBox" IsChecked="True" Content="you shake the pointer while dragging" Margin="0,4,0,0"/>
+            <CheckBox x:Name="GuessBox" Content="a drag starts (experimental guess)" Margin="0,4,0,0"/>
+          </StackPanel>
+        </GroupBox>
+
+        <GroupBox Header="Dragging out" Margin="0,0,8,8" Padding="6">
+          <StackPanel>
+            <RadioButton x:Name="PreferCopyRadio" GroupName="Out" IsChecked="True" Content="Copy; hold Shift during the drag to move"/>
+            <RadioButton x:Name="CopyOnlyRadio" GroupName="Out" Content="Copy only; Shift as the drag starts moves" Margin="0,4,0,0"/>
+            <CheckBox x:Name="RemoveBox" IsChecked="True" Content="Remove items after a successful drag out" Margin="0,8,0,0"/>
+          </StackPanel>
+        </GroupBox>
+
+        <GroupBox Header="Look" Margin="0,0,8,8" Padding="6">
+          <StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Shelf background" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <ComboBox x:Name="BackdropBox" SelectedIndex="0" Width="100">
+                <ComboBoxItem Content="Acrylic"/>
+                <ComboBoxItem Content="Mica"/>
+                <ComboBoxItem Content="Solid"/>
+              </ComboBox>
+            </StackPanel>
+            <CheckBox x:Name="StripsBox" Content="Show the edge strips (red)" Margin="0,8,0,0"/>
+          </StackPanel>
+        </GroupBox>
+      </WrapPanel>
+
+      <WrapPanel Margin="0,0,0,8">
+        <Button Content="Show Shelf" Click="ShowShelf_Click" Padding="10,3" Margin="0,0,6,6"/>
+        <Button Content="Hide Shelf" Click="HideShelf_Click" Padding="10,3" Margin="0,0,6,6"/>
+        <Button Content="Clear Shelf" Click="ClearShelf_Click" Padding="10,3" Margin="0,0,18,6"/>
+        <Button Content="Open Promised Folder" Click="OpenPromised_Click" Padding="10,3" Margin="0,0,18,6"/>
+        <Button Content="Copy Log" Click="CopyLog_Click" Padding="10,3" Margin="0,0,6,6" FontWeight="SemiBold"/>
+        <Button Content="Clear Log" Click="ClearLog_Click" Padding="10,3" Margin="0,0,6,6"/>
+      </WrapPanel>
+    </StackPanel>
+
+    <TextBox x:Name="LogBox" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+             TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+  </DockPanel>
+</Window>

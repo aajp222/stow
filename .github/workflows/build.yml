@@ -5,6 +5,11 @@ name: Build
 
 on:
   push:
+    # The Windows version has its own workflow (windows.yml).
+    paths-ignore:
+      - 'windows/**'
+      - 'WINDOWS.md'
+      - '.github/workflows/windows.yml'
   workflow_dispatch:
 
 jobs:

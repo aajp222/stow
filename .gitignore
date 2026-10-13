@@ -5,3 +5,7 @@ DerivedData/
 # constantly, so they'd block every `git pull`.
 xcuserdata/
 *.xcuserstate
+# Windows (.NET) build output
+windows/**/bin/
+windows/**/obj/
+windows/out/

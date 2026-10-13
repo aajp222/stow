@@ -1,0 +1,54 @@
+<Window x:Class="StowLab.ShelfWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Stow Lab shelf" Width="150" Height="420"
+        WindowStyle="None" ResizeMode="NoResize" Topmost="True"
+        ShowInTaskbar="False" ShowActivated="False">
+  <Grid Margin="6">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <DockPanel Margin="4,0,0,4">
+      <Button DockPanel.Dock="Right" Content="✕" ToolTip="Hide the shelf" Click="Hide_Click"
+              Padding="6,0" Background="Transparent" BorderThickness="0"
+              Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Window}}"/>
+      <TextBlock Text="Stow Lab" FontWeight="SemiBold" VerticalAlignment="Center"/>
+    </DockPanel>
+
+    <Grid Grid.Row="1">
+      <TextBlock x:Name="EmptyText" Text="Drop things here" Opacity="0.6"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      <ListBox x:Name="List" SelectionMode="Extended" Background="Transparent" BorderThickness="0"
+               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Window}}"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+               PreviewMouseLeftButtonDown="List_PreviewMouseLeftButtonDown"
+               PreviewMouseMove="List_PreviewMouseMove"
+               PreviewMouseLeftButtonUp="List_PreviewMouseLeftButtonUp">
+        <ListBox.ItemContainerStyle>
+          <Style TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="2,4"/>
+          </Style>
+        </ListBox.ItemContainerStyle>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel ToolTip="{Binding Path=Path}">
+              <Image Source="{Binding Icon}" Width="32" Height="32" HorizontalAlignment="Center"/>
+              <TextBlock Text="{Binding Name}" FontSize="11" Margin="0,2,0,0"
+                         TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+
+    <TextBlock Grid.Row="2" Text="Focus test: click, type, Esc" FontSize="10" Opacity="0.7" Margin="2,6,0,2"/>
+    <TextBox x:Name="FocusBox" Grid.Row="3"
+             PreviewMouseLeftButtonDown="FocusBox_PreviewMouseLeftButtonDown"
+             KeyDown="FocusBox_KeyDown"/>
+  </Grid>
+</Window>
