@@ -11,8 +11,14 @@ final class ShelfContextMenu: NSObject {
     private let viewModel: ShelfViewModel
     /// The items the open menu acts on, captured when the menu was built.
     private var targets: [ShelfItem] = []
-    /// Kept alive while its Share… item is on screen.
+    /// Kept alive while the share menu it shows is on screen.
     private var sharePicker: NSSharingServicePicker?
+    /// Where to show the share menu: a view and a rectangle in it (the shelf's list
+    /// and the selected row). Set by ShelfViewController.
+    var shareAnchor: () -> (view: NSView, rect: NSRect)? = { nil }
+    /// The open Trim Video window and the progress window of a running video action.
+    private var trimWindow: TrimWindowController?
+    private var videoTask: Task<Void, Never>?
     /// Folders you've given Stow access to this session (see withFolderAccess).
     private var grantedFolders: [URL] = []
 
@@ -43,10 +49,7 @@ final class ShelfContextMenu: NSObject {
                 menu.addItem(openWith)
             }
 
-            // The standard Share… item; choosing it shows the system share menu.
-            let picker = NSSharingServicePicker(items: items.map { $0.shareableValue })
-            sharePicker = picker
-            menu.addItem(picker.standardShareMenuItem)
+            menu.addItem(makeItem("Share…", #selector(shareItems)))
 
             if allFiles {
                 let quickActions = NSMenuItem(title: "Quick Actions", action: nil, keyEquivalent: "")
@@ -100,6 +103,27 @@ final class ShelfContextMenu: NSObject {
         return item
     }
 
+    // MARK: - Share
+
+    /// Shows the system share menu (AirDrop, Mail, Messages...) next to the selection.
+    ///
+    /// This doesn't use NSSharingServicePicker's ready-made menu item: the share menu
+    /// and the windows it opens (the AirDrop and Messages sheets) expect an active app
+    /// with a key window, and the shelf is a panel in an app that's normally never
+    /// active. So Stow becomes the active app first and shows the picker itself,
+    /// pointing at the selection.
+    @objc private func shareItems() {
+        guard let anchor = shareAnchor(), !targets.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        NSApp.activate()
+        anchor.view.window?.makeKey()
+        let picker = NSSharingServicePicker(items: targets.map { $0.shareableValue })
+        sharePicker = picker
+        picker.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .minX)
+    }
+
     // MARK: - Quick Actions
 
     /// Makes new files from the selection: a zip, converted or smaller images, or one
@@ -122,7 +146,93 @@ final class ShelfContextMenu: NSObject {
         menu.addItem(makeItem("Make Smaller", #selector(makeItemsSmaller), enabled: allImages))
         menu.addItem(.separator())
         menu.addItem(makeItem("Combine into PDF", #selector(combineIntoPDF), enabled: pages.count == urls.count && !pages.isEmpty))
+        menu.addItem(.separator())
+        // One video job at a time: they use every core as it is.
+        let allVideos = urls.allSatisfy(VideoActions.isVideo) && videoTask == nil
+        let convertVideo = NSMenuItem(title: "Convert Video", action: nil, keyEquivalent: "")
+        convertVideo.isEnabled = allVideos
+        let presets = NSMenu()
+        presets.autoenablesItems = false
+        for preset in VideoActions.Preset.allCases {
+            let item = makeItem(preset.title, #selector(convertVideos(_:)))
+            item.representedObject = preset.rawValue
+            presets.addItem(item)
+        }
+        convertVideo.submenu = presets
+        menu.addItem(convertVideo)
+        menu.addItem(makeItem("Trim Video…", #selector(trimVideo), enabled: allVideos && urls.count == 1 && trimWindow == nil))
         return menu
+    }
+
+    // MARK: - Video
+
+    @objc private func convertVideos(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let preset = VideoActions.Preset(rawValue: rawValue) else { return }
+        let urls = targets.compactMap { $0.fileURL }
+        runVideoAction("Couldn't convert the video", verb: "Converting", urls: urls, anchor: targets.last?.id) { url, folder, onProgress in
+            try await VideoActions.convert(url, to: preset, into: folder, onProgress: onProgress)
+        }
+    }
+
+    /// Opens the trim window; clicking Trim there saves the kept part as a new file,
+    /// without re-encoding.
+    @objc private func trimVideo() {
+        guard let item = targets.first, let url = item.fileURL else { return }
+        let anchor = item.id
+        let controller = TrimWindowController(url: url) { [weak self] range in
+            self?.runVideoAction("Couldn't trim the video", verb: "Trimming", urls: [url], anchor: anchor) { url, folder, onProgress in
+                try await VideoActions.trim(url, to: range, into: folder, onProgress: onProgress)
+            }
+        } onClose: { [weak self] in
+            self?.trimWindow = nil
+        }
+        trimWindow = controller
+        controller.show()
+    }
+
+    /// Runs a video action on each file in turn, with a progress window you can
+    /// cancel, and puts each result on the shelf as it finishes.
+    private func runVideoAction(
+        _ failureTitle: String,
+        verb: String,
+        urls: [URL],
+        anchor: ShelfItem.ID?,
+        _ work: @escaping (URL, URL, @escaping @MainActor (Double) -> Void) async throws -> URL
+    ) {
+        guard videoTask == nil else {
+            NSSound.beep()
+            return
+        }
+        let folder: URL
+        do {
+            folder = try PromisedFileStore().makeDropFolder()
+        } catch {
+            Dialog.showProblem(failureTitle, details: error.localizedDescription)
+            return
+        }
+        let progress = VideoProgressPanel()
+        videoTask = Task {
+            defer {
+                progress.close()
+                videoTask = nil
+            }
+            do {
+                for (index, url) in urls.enumerated() {
+                    let count = urls.count == 1 ? "" : " (\(index + 1) of \(urls.count))"
+                    let text = "\(verb) “\(url.lastPathComponent)”\(count)…"
+                    progress.update(text, progress: 0)
+                    let result = try await work(url, folder) { progress.update(text, progress: $0) }
+                    viewModel.addStowCopies([result], after: anchor)
+                }
+            } catch {
+                // Cancel isn't a problem to report.
+                if !Task.isCancelled {
+                    Dialog.showProblem(failureTitle, details: error.localizedDescription)
+                }
+            }
+        }
+        progress.show { [weak self] in self?.videoTask?.cancel() }
     }
 
     @objc private func compressItems() {
