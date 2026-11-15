@@ -112,6 +112,44 @@ struct ShelfViewModelTests {
         #expect(model.items.allSatisfy { $0.stackID == nil })
     }
 
+    @Test func stackingInGroupsSplitsEvenly() {
+        let items = (0..<100).map { ShelfItem(content: .text("\($0)")) }
+        let model = viewModel(items)
+        model.stack(items.map { $0.id }, inGroupsOf: 20)
+        let stacks = Dictionary(grouping: model.items, by: { $0.stackID })
+        #expect(stacks.count == 5)
+        #expect(stacks.values.allSatisfy { $0.count == 20 })
+        #expect(stacks.keys.allSatisfy { $0 != nil })
+        // Still in the order they were in, so the first stack is items 0...19.
+        #expect(names(model) == items.map { $0.displayName })
+        #expect(Set(model.items[0..<20].map { $0.stackID }).count == 1)
+    }
+
+    @Test func stackingInGroupsHandlesLeftoversAndOldStacks() {
+        let old = UUID()
+        let items = (0..<7).map { ShelfItem(content: .text("\($0)"), stackID: old, stackName: "Old") }
+        let model = viewModel(items)
+        model.stack(items.map { $0.id }, inGroupsOf: 3)
+        // 3 + 3 + a lone leftover, which stays loose.
+        #expect(model.items[0].stackID == model.items[2].stackID)
+        #expect(model.items[3].stackID == model.items[5].stackID)
+        #expect(model.items[0].stackID != model.items[3].stackID)
+        #expect(model.items[6].stackID == nil)
+        #expect(model.items.allSatisfy { $0.stackID != old && $0.stackName == nil })
+
+        model.stack(items.map { $0.id }, inGroupsOf: 5)
+        // 5 + 2: the leftover pair is a stack of its own.
+        #expect(model.items[5].stackID != nil)
+        #expect(model.items[5].stackID == model.items[6].stackID)
+    }
+
+    @Test func groupSummariesReadNaturally() {
+        #expect(ShelfContextMenu.groupSummary(100, in: 20) == "5 stacks")
+        #expect(ShelfContextMenu.groupSummary(105, in: 20) == "5 stacks and one of 5")
+        #expect(ShelfContextMenu.groupSummary(41, in: 20) == "2 stacks and 1 loose item")
+        #expect(ShelfContextMenu.groupSummary(10, in: 20) == "1 stack of 10")
+    }
+
     @Test func renamingAStackNamesEveryMember() {
         let stack = UUID()
         let model = viewModel([ShelfItem(content: .text("a"), stackID: stack), ShelfItem(content: .text("b"), stackID: stack)])

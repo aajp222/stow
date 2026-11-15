@@ -250,6 +250,32 @@ final class ShelfViewModel {
         items = Self.gatherStacks(updated)
     }
 
+    /// Splits items into stacks of `size`, in the order they're on the shelf: 100
+    /// items in groups of 20 make 5 stacks. Whatever is left over makes a smaller
+    /// last stack (a single leftover item stays loose). Items already in a stack
+    /// leave it.
+    func stack(_ ids: [ShelfItem.ID], inGroupsOf size: Int) {
+        guard size >= 2, Set(ids).count >= 2 else { return }
+        let members = Set(ids)
+        var updated = items
+        var stackID = UUID()
+        var filled = 0
+        let total = updated.count { members.contains($0.id) }
+        var placed = 0
+        for index in updated.indices where members.contains(updated[index].id) {
+            if filled == size {
+                stackID = UUID()
+                filled = 0
+            }
+            // A last group of one isn't a stack.
+            let isLoneLeftover = filled == 0 && placed == total - 1
+            updated[index].stackID = isLoneLeftover ? nil : stackID
+            filled += 1
+            placed += 1
+        }
+        items = Self.gatherStacks(updated)
+    }
+
     /// Names a stack (every member carries the name). An empty name removes it, and
     /// the stack shows its item count again.
     func renameStack(_ stackID: UUID, to name: String) {
