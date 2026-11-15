@@ -1,7 +1,7 @@
 import AVFoundation
 import UniformTypeIdentifiers
 
-/// The video Quick Actions: re-encoding a video to make it smaller or more widely
+/// The video and audio Quick Actions: saving sound files in another format, re-encoding a video to make it smaller or more widely
 /// playable (what you'd open HandBrake for) and cutting a piece out of one without
 /// re-encoding it (what you'd open LosslessCut for).
 ///
@@ -49,8 +49,124 @@ enum VideoActions {
         }
     }
 
+    /// What Convert Audio can make: every audio format macOS can write by itself.
+    /// (It has no MP3 or Ogg encoder.)
+    enum AudioFormat: String, CaseIterable {
+        case aac
+        case appleLossless
+        case flac
+        case wav
+        case aiff
+
+        var title: String {
+            switch self {
+            case .aac: "M4A (AAC, small)"
+            case .appleLossless: "Apple Lossless (M4A)"
+            case .flac: "FLAC (lossless)"
+            case .wav: "WAV (uncompressed)"
+            case .aiff: "AIFF (uncompressed)"
+            }
+        }
+
+        nonisolated var pathExtension: String {
+            switch self {
+            case .aac, .appleLossless: "m4a"
+            case .flac: "flac"
+            case .wav: "wav"
+            case .aiff: "aiff"
+            }
+        }
+    }
+
     nonisolated static func isVideo(_ url: URL) -> Bool {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) ?? false
+    }
+
+    nonisolated static func isAudio(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .audio) ?? false
+    }
+
+    /// Saves the sound file in another format, keeping its sample rate, channels and
+    /// (for the lossless formats) bit depth.
+    nonisolated static func convertAudio(
+        _ url: URL,
+        to format: AudioFormat,
+        into folder: URL,
+        onProgress: @escaping @MainActor (Double) -> Void = { _ in }
+    ) async throws -> URL {
+        let name = url.deletingPathExtension().lastPathComponent
+        let destination = uniqueURL(in: folder, named: name, pathExtension: format.pathExtension)
+        if format == .aac {
+            // The exporter picks a bit rate and resamples if AAC needs it.
+            return try await export(
+                url,
+                preset: AVAssetExportPresetAppleM4A,
+                fileType: .m4a,
+                timeRange: nil,
+                to: destination,
+                onProgress: onProgress
+            )
+        }
+        do {
+            try await rewriteAudio(url, as: format, to: destination, onProgress: onProgress)
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error is CancellationError ? error : VideoActionError.unreadableAudio(url.lastPathComponent)
+        }
+        return destination
+    }
+
+    /// Reads the sound a chunk at a time and writes it back out in `format`. Runs off
+    /// the main thread: it's a plain loop, and a long recording takes a while.
+    @concurrent
+    nonisolated private static func rewriteAudio(
+        _ url: URL,
+        as format: AudioFormat,
+        to destination: URL,
+        onProgress: @escaping @MainActor (Double) -> Void
+    ) async throws {
+        let source = try AVAudioFile(forReading: url)
+        let processing = source.processingFormat
+        // 16, 24 or 32 bits like the original; anything else (MP3, AAC...) has no
+        // bit depth of its own, so use CD quality.
+        let sourceBits = source.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int ?? 0
+        let bits = [16, 24, 32].contains(sourceBits) ? sourceBits : 16
+        var settings: [String: Any] = [
+            AVSampleRateKey: processing.sampleRate,
+            AVNumberOfChannelsKey: processing.channelCount,
+        ]
+        switch format {
+        case .wav, .aiff:
+            settings[AVFormatIDKey] = kAudioFormatLinearPCM
+            settings[AVLinearPCMBitDepthKey] = bits
+            settings[AVLinearPCMIsFloatKey] = false
+            settings[AVLinearPCMIsBigEndianKey] = format == .aiff
+        case .flac:
+            settings[AVFormatIDKey] = kAudioFormatFLAC
+            settings[AVEncoderBitDepthHintKey] = min(bits, 24)
+        case .appleLossless:
+            settings[AVFormatIDKey] = kAudioFormatAppleLossless
+            settings[AVEncoderBitDepthHintKey] = bits
+        case .aac:
+            break
+        }
+        let output = try AVAudioFile(
+            forWriting: destination,
+            settings: settings,
+            commonFormat: processing.commonFormat,
+            interleaved: processing.isInterleaved
+        )
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: processing, frameCapacity: 1 << 16) else {
+            throw VideoActionError.unreadableAudio(url.lastPathComponent)
+        }
+        while source.framePosition < source.length {
+            try Task.checkCancellation()
+            try source.read(into: buffer)
+            if buffer.frameLength == 0 { break }
+            try output.write(from: buffer)
+            await onProgress(Double(source.framePosition) / Double(max(source.length, 1)))
+        }
+        output.close()
     }
 
     /// Re-encodes the video with `preset`. The picture is scaled down to fit the
@@ -68,7 +184,7 @@ enum VideoActions {
             preset: preset.exportPreset,
             fileType: preset.fileType,
             timeRange: nil,
-            to: uniqueURL(in: folder, named: name, fileType: preset.fileType),
+            to: uniqueURL(in: folder, named: name, pathExtension: pathExtension(for: preset.fileType)),
             onProgress: onProgress
         )
     }
@@ -94,7 +210,7 @@ enum VideoActions {
             preset: AVAssetExportPresetPassthrough,
             fileType: fileType,
             timeRange: timeRange,
-            to: uniqueURL(in: folder, named: name, fileType: fileType),
+            to: uniqueURL(in: folder, named: name, pathExtension: pathExtension(for: fileType)),
             onProgress: onProgress
         )
     }
@@ -133,9 +249,12 @@ enum VideoActions {
         return destination
     }
 
+    nonisolated private static func pathExtension(for fileType: AVFileType) -> String {
+        UTType(fileType.rawValue)?.preferredFilenameExtension ?? "mov"
+    }
+
     /// `folder/name.<extension>`, or "name 2", "name 3"... if taken.
-    nonisolated private static func uniqueURL(in folder: URL, named name: String, fileType: AVFileType) -> URL {
-        let pathExtension = UTType(fileType.rawValue)?.preferredFilenameExtension ?? "mov"
+    nonisolated private static func uniqueURL(in folder: URL, named name: String, pathExtension: String) -> URL {
         var number = 1
         while true {
             let stem = number == 1 ? name : "\(name) \(number)"
@@ -150,9 +269,12 @@ enum VideoActions {
 
 enum VideoActionError: LocalizedError {
     case unreadable(String)
+    case unreadableAudio(String)
 
     var errorDescription: String? {
         switch self {
+        case .unreadableAudio(let name):
+            "“\(name)” couldn't be converted. Stow works with sound files Music or QuickTime Player can open, such as WAV, AIFF, MP3, M4A and FLAC."
         case .unreadable(let name):
             "“\(name)” isn't a video Stow can read. It works with what QuickTime Player can open, such as MP4 and MOV."
         }
