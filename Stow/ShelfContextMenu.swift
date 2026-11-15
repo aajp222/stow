@@ -147,7 +147,7 @@ final class ShelfContextMenu: NSObject {
         menu.addItem(.separator())
         menu.addItem(makeItem("Combine into PDF", #selector(combineIntoPDF), enabled: pages.count == urls.count && !pages.isEmpty))
         menu.addItem(.separator())
-        // One video job at a time: they use every core as it is.
+        // One video or audio job at a time: they use every core as it is.
         let allVideos = urls.allSatisfy(VideoActions.isVideo) && videoTask == nil
         let convertVideo = NSMenuItem(title: "Convert Video", action: nil, keyEquivalent: "")
         convertVideo.isEnabled = allVideos
@@ -161,6 +161,17 @@ final class ShelfContextMenu: NSObject {
         convertVideo.submenu = presets
         menu.addItem(convertVideo)
         menu.addItem(makeItem("Trim Video…", #selector(trimVideo), enabled: allVideos && urls.count == 1 && trimWindow == nil))
+        let convertAudio = NSMenuItem(title: "Convert Audio", action: nil, keyEquivalent: "")
+        convertAudio.isEnabled = urls.allSatisfy(VideoActions.isAudio) && videoTask == nil
+        let formats = NSMenu()
+        formats.autoenablesItems = false
+        for format in VideoActions.AudioFormat.allCases {
+            let item = makeItem(format.title, #selector(convertAudio(_:)))
+            item.representedObject = format.rawValue
+            formats.addItem(item)
+        }
+        convertAudio.submenu = formats
+        menu.addItem(convertAudio)
         return menu
     }
 
@@ -172,6 +183,15 @@ final class ShelfContextMenu: NSObject {
         let urls = targets.compactMap { $0.fileURL }
         runVideoAction("Couldn't convert the video", verb: "Converting", urls: urls, anchor: targets.last?.id) { url, folder, onProgress in
             try await VideoActions.convert(url, to: preset, into: folder, onProgress: onProgress)
+        }
+    }
+
+    @objc private func convertAudio(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let format = VideoActions.AudioFormat(rawValue: rawValue) else { return }
+        let urls = targets.compactMap { $0.fileURL }
+        runVideoAction("Couldn't convert the audio", verb: "Converting", urls: urls, anchor: targets.last?.id) { url, folder, onProgress in
+            try await VideoActions.convertAudio(url, to: format, into: folder, onProgress: onProgress)
         }
     }
 

@@ -83,6 +83,63 @@ struct VideoActionsTests {
         #expect(format.mediaSubType == .h264)
     }
 
+    /// One second of a 440 Hz tone: stereo, 44.1 kHz, 24-bit WAV.
+    private func makeWAV(named name: String) throws -> URL {
+        let url = folder.appending(path: name)
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 24,
+            AVLinearPCMIsFloatKey: false,
+        ])
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 44100))
+        buffer.frameLength = 44100
+        for channel in 0..<2 {
+            let samples = try #require(buffer.floatChannelData)[channel]
+            for frame in 0..<44100 {
+                samples[frame] = sin(Float(frame) * 2 * .pi * 440 / 44100) * 0.5
+            }
+        }
+        try file.write(from: buffer)
+        file.close()
+        return url
+    }
+
+    @Test(arguments: VideoActions.AudioFormat.allCases)
+    func audioConvertsToEveryFormat(_ format: VideoActions.AudioFormat) async throws {
+        let wav = try makeWAV(named: "Tone.wav")
+        let converted = try await VideoActions.convertAudio(wav, to: format, into: folder)
+        #expect(converted.pathExtension == format.pathExtension)
+        let file = try AVAudioFile(forReading: converted)
+        #expect(file.fileFormat.sampleRate == 44100)
+        #expect(file.fileFormat.channelCount == 2)
+        #expect(abs(Double(file.length) / 44100 - 1) < 0.1)
+        let formatID = file.fileFormat.streamDescription.pointee.mFormatID
+        let expected: AudioFormatID = switch format {
+        case .aac: kAudioFormatMPEG4AAC
+        case .appleLossless: kAudioFormatAppleLossless
+        case .flac: kAudioFormatFLAC
+        case .wav, .aiff: kAudioFormatLinearPCM
+        }
+        #expect(formatID == expected)
+        if format == .wav || format == .aiff {
+            #expect(file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int == 24)
+        }
+    }
+
+    @Test func convertingAWAVToWAVDoesntOverwriteIt() async throws {
+        let wav = try makeWAV(named: "Same.wav")
+        let converted = try await VideoActions.convertAudio(wav, to: .wav, into: folder)
+        #expect(converted.lastPathComponent == "Same 2.wav")
+    }
+
+    @Test func tellsAudioFromOtherFiles() {
+        #expect(VideoActions.isAudio(URL(filePath: "/tmp/a.wav")))
+        #expect(VideoActions.isAudio(URL(filePath: "/tmp/a.mp3")))
+        #expect(!VideoActions.isAudio(URL(filePath: "/tmp/a.mp4")))
+    }
+
     @Test func aFileThatIsntAVideoIsRefused() async throws {
         let text = folder.appending(path: "Notes.mp4")
         try Data("not a video".utf8).write(to: text)
