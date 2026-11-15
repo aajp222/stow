@@ -239,12 +239,11 @@ final class ShelfContextMenu: NSObject {
             }
             do {
                 for (index, url) in urls.enumerated() {
-                    let count = urls.count == 1 ? "" : " (\(index + 1) of \(urls.count))"
-                    let text = "\(verb) “\(url.lastPathComponent)”\(count)…"
-                    progress.update(text, progress: 0)
-                    let result = try await work(url, folder) { progress.update(text, progress: $0) }
+                    progress.begin(verb, url, index: index, count: urls.count)
+                    let result = try await work(url, folder) { progress.update(progress: $0) }
                     viewModel.addStowCopies([result], after: anchor)
                 }
+                await progress.finish()
             } catch {
                 // Cancel isn't a problem to report.
                 if !Task.isCancelled {
