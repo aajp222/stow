@@ -71,6 +71,9 @@ final class ShelfContextMenu: NSObject {
             if items.count >= 2, !isOneStack {
                 menu.addItem(makeItem("Stack Items", #selector(stackItems)))
             }
+            if items.count >= 3 {
+                menu.addItem(makeItem("Stack in Groups…", #selector(stackItemsInGroups)))
+            }
             if isOneStack {
                 menu.addItem(makeItem("Rename Stack…", #selector(renameStack)))
             }
@@ -239,12 +242,11 @@ final class ShelfContextMenu: NSObject {
             }
             do {
                 for (index, url) in urls.enumerated() {
-                    let count = urls.count == 1 ? "" : " (\(index + 1) of \(urls.count))"
-                    let text = "\(verb) “\(url.lastPathComponent)”\(count)…"
-                    progress.update(text, progress: 0)
-                    let result = try await work(url, folder) { progress.update(text, progress: $0) }
+                    progress.begin(verb, url, index: index, count: urls.count)
+                    let result = try await work(url, folder) { progress.update(progress: $0) }
                     viewModel.addStowCopies([result], after: anchor)
                 }
+                await progress.finish()
             } catch {
                 // Cancel isn't a problem to report.
                 if !Task.isCancelled {
@@ -525,6 +527,47 @@ final class ShelfContextMenu: NSObject {
 
     @objc private func stackItems() {
         viewModel.stack(targets.map { $0.id })
+    }
+
+    /// Asks how many items each stack should hold, then splits the selection into
+    /// stacks of that size.
+    @objc private func stackItemsInGroups() {
+        let count = targets.count
+        let alert = NSAlert()
+        alert.messageText = "Stack in Groups"
+        alert.informativeText = "How many items in each stack? \(count) items are selected, so groups of 20 would make \(Self.groupSummary(count, in: 20))."
+        let field = NSTextField(string: "20")
+        field.frame = NSRect(x: 0, y: 0, width: 80, height: 24)
+        field.formatter = {
+            let formatter = NumberFormatter()
+            formatter.allowsFloats = false
+            formatter.minimum = 2
+            return formatter
+        }()
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Stack")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard Dialog.run({ alert.runModal() }) == .alertFirstButtonReturn else { return }
+        let size = field.integerValue
+        guard size >= 2 else {
+            NSSound.beep()
+            return
+        }
+        viewModel.stack(targets.map { $0.id }, inGroupsOf: size)
+    }
+
+    /// "5 stacks", or "5 stacks and one of 3" when it doesn't divide evenly.
+    static func groupSummary(_ count: Int, in size: Int) -> String {
+        let full = count / size
+        let rest = count % size
+        let stacks = full == 1 ? "1 stack" : "\(full) stacks"
+        switch (full, rest) {
+        case (0, _): return "1 stack of \(count)"
+        case (_, 0): return stacks
+        case (_, 1): return "\(stacks) and 1 loose item"
+        default: return "\(stacks) and one of \(rest)"
+        }
     }
 
     @objc private func unstackItems() {

@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import SwiftUI
 
 /// The Trim Video window: the video with QuickTime Player's yellow trim bar under
 /// it. Drag the ends, click Trim, and `onTrim` gets the part you kept.
@@ -90,60 +91,93 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-/// A small floating window with a progress bar and a Cancel button, shown while a
-/// video is being converted or trimmed (which can take minutes).
+/// The floating progress window for video and audio jobs, which can take minutes:
+/// a small Liquid Glass card like the shelf, near the top of the screen. It never
+/// takes focus, and you can drag it out of the way. VideoProgressView draws it.
 final class VideoProgressPanel {
     private let panel: NSPanel
-    private let label = NSTextField(labelWithString: "")
-    private let bar = NSProgressIndicator()
-    private var onCancel: () -> Void = {}
+    private let model = VideoProgressModel()
 
     init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 84),
-            styleMask: [.titled, .utilityWindow, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: VideoProgressView.width, height: 86),
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.title = "Stow"
         panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.animationBehavior = .utilityWindow
 
-        label.lineBreakMode = .byTruncatingMiddle
-        bar.isIndeterminate = false
-        bar.minValue = 0
-        bar.maxValue = 1
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
-        cancel.controlSize = .small
-        let row = NSStackView(views: [bar, cancel])
-        row.spacing = 10
-        let stack = NSStackView(views: [label, row])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
-        row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-        label.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor, constant: -32).isActive = true
-        panel.contentView = stack
+        let hosting = FirstClickHostingView(rootView: VideoProgressView(model: model))
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = 24
+        glass.contentView = hosting
+        panel.contentView = glass
+        panel.setContentSize(hosting.fittingSize)
     }
 
     func show(onCancel: @escaping () -> Void) {
-        self.onCancel = onCancel
-        panel.center()
+        model.onCancel = onCancel
+        model.startedAt = Date()
+        // Top centre of the screen you're on, clear of the menu bar.
+        let screen = ShelfPanelController.screenWithMouse() ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(
+                x: visible.midX - panel.frame.width / 2,
+                y: visible.maxY - panel.frame.height - 24
+            ))
+        }
         panel.orderFrontRegardless()
     }
 
-    func update(_ text: String, progress: Double) {
-        label.stringValue = text
-        bar.doubleValue = progress
+    /// Moves on to file number `index` (0-based) of `count`.
+    func begin(_ verb: String, _ url: URL, index: Int, count: Int) {
+        model.verb = verb
+        model.fileName = url.lastPathComponent
+        model.index = index
+        model.count = count
+        model.fraction = 0
+        model.thumbnail = nil
+        panel.setContentSize(panel.contentView?.fittingSize ?? panel.frame.size)
+        Task {
+            let item = ShelfItem(content: .file(url))
+            let scale = panel.screen?.backingScaleFactor ?? 2
+            let thumbnail = await ThumbnailProvider.shared.thumbnail(for: item, size: CGSize(width: 88, height: 88), scale: scale)
+            // Unless the job has moved on to the next file meanwhile.
+            if model.fileName == url.lastPathComponent {
+                model.thumbnail = thumbnail
+            }
+        }
+    }
+
+    func update(progress: Double) {
+        model.fraction = progress
+    }
+
+    /// Everything worked: show the tick for a moment, then close.
+    func finish() async {
+        model.isFinished = true
+        try? await Task.sleep(for: .seconds(1.2))
+        close()
     }
 
     func close() {
         panel.close()
     }
+}
 
-    @objc private func cancelClicked() {
-        onCancel()
+/// The window never becomes key, so without this the first click on Cancel would
+/// only "wake" the window instead of pressing the button.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 }
