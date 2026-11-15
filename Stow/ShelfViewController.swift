@@ -244,6 +244,11 @@ final class ShelfViewController: NSViewController {
             guard let self else { return nil }
             return self.contextMenus.menu(for: onItem ? self.selectedItems : [])
         }
+        contextMenus.shareAnchor = { [weak self] in
+            guard let self, let indexPath = self.collectionView.selectionIndexPaths.min(),
+                  let frame = self.collectionView.layoutAttributesForItem(at: indexPath)?.frame else { return nil }
+            return (self.collectionView, frame)
+        }
         collectionView.selectedFileURLs = { [weak self] in
             self?.selectedItems.compactMap { $0.fileURL } ?? []
         }
