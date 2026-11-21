@@ -106,7 +106,7 @@ struct VideoActionsTests {
         return url
     }
 
-    @Test(arguments: VideoActions.AudioFormat.allCases)
+    @Test(arguments: VideoActions.AudioFormat.allCases.filter { !$0.needsFFmpeg })
     func audioConvertsToEveryFormat(_ format: VideoActions.AudioFormat) async throws {
         let wav = try makeWAV(named: "Tone.wav")
         let converted = try await VideoActions.convertAudio(wav, to: format, into: folder)
@@ -121,11 +121,24 @@ struct VideoActionsTests {
         case .appleLossless: kAudioFormatAppleLossless
         case .flac: kAudioFormatFLAC
         case .wav, .aiff: kAudioFormatLinearPCM
+        case .mp3, .ogg: 0
         }
         #expect(formatID == expected)
         if format == .wav || format == .aiff {
             #expect(file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int == 24)
         }
+    }
+
+    /// MP3 and Ogg use the downloaded ffmpeg, so these only run where it's installed
+    /// (not on CI).
+    @Test(.enabled(if: MediaTools.isInstalled), arguments: [VideoActions.AudioFormat.mp3, .ogg])
+    func audioConvertsWithFFmpeg(_ format: VideoActions.AudioFormat) async throws {
+        let wav = try makeWAV(named: "Tone.wav")
+        let converted = try await VideoActions.convertAudio(wav, to: format, into: folder)
+        #expect(converted.pathExtension == format.pathExtension)
+        let info = await FFmpegActions.info(of: converted)
+        #expect(info.audioCodec == (format == .mp3 ? "mp3" : "vorbis"))
+        #expect(abs((info.duration ?? 0) - 1) < 0.1)
     }
 
     @Test func convertingAWAVToWAVDoesntOverwriteIt() async throws {

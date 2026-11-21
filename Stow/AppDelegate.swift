@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var welcomeWindow = WelcomeWindowController(settings: settings)
     private let dragMonitor = DragMonitor()
     private let screenshotWatcher = ScreenshotWatcher()
+    private lazy var clipboardWatcher = ClipboardWatcher(viewModel: viewModel)
     private let shareInbox = ShareInbox()
     private var autosave: ShelfAutosave?
     private var hotKey: HotKey?
@@ -78,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the shelf like a drop.
         screenshotWatcher.onScreenshots = { [weak self] urls in self?.stow(urls.map { .file($0) }) }
         observeScreenshotSetting()
+        observeClipboardSetting()
         shareInbox.onItems = { [weak self] items in self?.stow(items) }
         shareInbox.start()
 
@@ -125,6 +127,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         screenshotWatcher.watch(bookmark: bookmark)
+    }
+
+    /// Starts or stops clipboard history as the setting changes.
+    private func observeClipboardSetting() {
+        let isOn = withObservationTracking {
+            settings.keepClipboardHistory
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.observeClipboardSetting()
+            }
+        }
+        if isOn {
+            clipboardWatcher.start()
+        } else {
+            clipboardWatcher.stop()
+        }
     }
 
     // MARK: - Menu bar

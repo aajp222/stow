@@ -49,22 +49,26 @@ enum VideoActions {
         }
     }
 
-    /// What Convert Audio can make: every audio format macOS can write by itself.
-    /// (It has no MP3 or Ogg encoder.)
+    /// What Convert Audio can make: every audio format macOS can write by itself,
+    /// plus MP3 and Ogg Vorbis, which it can't, so those use ffmpeg (FFmpegActions).
     enum AudioFormat: String, CaseIterable {
+        case mp3
         case aac
         case appleLossless
         case flac
         case wav
         case aiff
+        case ogg
 
         var title: String {
             switch self {
+            case .mp3: "MP3 (plays anywhere)"
             case .aac: "M4A (AAC, small)"
             case .appleLossless: "Apple Lossless (M4A)"
             case .flac: "FLAC (lossless)"
             case .wav: "WAV (uncompressed)"
             case .aiff: "AIFF (uncompressed)"
+            case .ogg: "Ogg Vorbis"
             }
         }
 
@@ -74,12 +78,24 @@ enum VideoActions {
             case .flac: "flac"
             case .wav: "wav"
             case .aiff: "aiff"
+            case .mp3: "mp3"
+            case .ogg: "ogg"
             }
+        }
+
+        /// Made with the ffmpeg MediaTools downloads rather than by macOS.
+        nonisolated var needsFFmpeg: Bool {
+            self == .mp3 || self == .ogg
         }
     }
 
     nonisolated static func isVideo(_ url: URL) -> Bool {
-        UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) ?? false
+        needsFFmpeg(url) || (UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) ?? false)
+    }
+
+    /// Video QuickTime can't open (MKV, WebM, AVI...), which only ffmpeg can convert.
+    nonisolated static func needsFFmpeg(_ url: URL) -> Bool {
+        FFmpegActions.otherVideoExtensions.contains(url.pathExtension.lowercased())
     }
 
     nonisolated static func isAudio(_ url: URL) -> Bool {
@@ -94,6 +110,9 @@ enum VideoActions {
         into folder: URL,
         onProgress: @escaping @MainActor (Double) -> Void = { _ in }
     ) async throws -> URL {
+        if format.needsFFmpeg {
+            return try await FFmpegActions.convertAudio(url, to: format, into: folder, onProgress: onProgress)
+        }
         let name = url.deletingPathExtension().lastPathComponent
         let destination = uniqueURL(in: folder, named: name, pathExtension: format.pathExtension)
         if format == .aac {
@@ -147,7 +166,7 @@ enum VideoActions {
         case .appleLossless:
             settings[AVFormatIDKey] = kAudioFormatAppleLossless
             settings[AVEncoderBitDepthHintKey] = bits
-        case .aac:
+        case .aac, .mp3, .ogg:
             break
         }
         let output = try AVAudioFile(
@@ -178,6 +197,11 @@ enum VideoActions {
         into folder: URL,
         onProgress: @escaping @MainActor (Double) -> Void = { _ in }
     ) async throws -> URL {
+        // QuickTime can't read it: hand it to ffmpeg when it's there.
+        let quickTimeCanRead = await isReadable(url)
+        if needsFFmpeg(url) || !quickTimeCanRead, MediaTools.isInstalled {
+            return try await FFmpegActions.convertVideo(url, to: preset, into: folder, onProgress: onProgress)
+        }
         let name = url.deletingPathExtension().lastPathComponent + " (\(preset.suffix))"
         return try await export(
             url,
@@ -247,6 +271,10 @@ enum VideoActions {
             throw error
         }
         return destination
+    }
+
+    nonisolated static func isReadable(_ url: URL) async -> Bool {
+        (try? await AVURLAsset(url: url).load(.isReadable)) ?? false
     }
 
     nonisolated private static func pathExtension(for fileType: AVFileType) -> String {
