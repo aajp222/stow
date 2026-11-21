@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Download Audio: saves the sound of a YouTube video as an MP3 or M4A, using the
 /// yt-dlp, ffmpeg and Deno that MediaTools downloads.
@@ -36,6 +36,30 @@ enum YouTubeAudio {
         return ["/shorts/", "/live/"].contains { path.hasPrefix($0) && path.count > $0.count }
     }
 
+    /// The video's ID ("dQw4w9WgXcQ"), from any link isVideoLink accepts.
+    nonisolated static func videoID(from url: URL) -> String? {
+        guard isVideoLink(url) else { return nil }
+        let parts = url.path().split(separator: "/").map(String.init)
+        if url.host()?.lowercased() == "youtu.be" {
+            return parts.first
+        }
+        if url.path() == "/watch" {
+            return URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "v" }?.value
+        }
+        return parts.count >= 2 ? parts[1] : nil
+    }
+
+    /// The video's thumbnail from YouTube's image server, for the progress bubble.
+    nonisolated static func thumbnail(for url: URL) async -> NSImage? {
+        guard let id = videoID(from: url),
+              let encoded = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))),
+              let imageURL = URL(string: "https://i.ytimg.com/vi/\(encoded)/mqdefault.jpg"),
+              let (data, response) = try? await URLSession.shared.data(from: imageURL),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return NSImage(data: data)
+    }
+
     /// Downloads the audio of `url` into `folder` and returns the file. `onProgress`
     /// gets 0...1: the download is most of it, the conversion the last bit.
     nonisolated static func download(
@@ -64,6 +88,9 @@ enum YouTubeAudio {
             "--paths", workFolder.path,
             "--output", "%(title).180B.%(ext)s",
             "--embed-metadata",
+            // The video's thumbnail as album art, so the shelf (and Music) show it.
+            "--embed-thumbnail",
+            "--convert-thumbnails", "jpg",
             "--extract-audio",
             "--audio-format", format.rawValue,
         ]

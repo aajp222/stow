@@ -16,6 +16,12 @@ final class ShelfContextMenu: NSObject {
     /// Where to show the share menu: a view and a rectangle in it (the shelf's list
     /// and the selected row). Set by ShelfViewController.
     var shareAnchor: () -> (view: NSView, rect: NSRect)? = { nil }
+    /// The shelf's window, and two things the Download Audio bubble needs from the
+    /// list: where an item's row is on screen, and hiding rows until it pours into
+    /// them. Set by ShelfViewController.
+    var shelfWindow: () -> NSWindow? = { nil }
+    var rowScreenFrame: (ShelfItem.ID) -> NSRect? = { _ in nil }
+    var setHiddenItems: (Set<ShelfItem.ID>) -> Void = { _ in }
     /// The open Trim Video window and the progress window of a running video action.
     private var trimWindow: TrimWindowController?
     private var videoTask: Task<Void, Never>?
@@ -218,6 +224,7 @@ final class ShelfContextMenu: NSObject {
             verb: "Downloading",
             items: links,
             anchor: targets.last?.id,
+            risesFromShelf: true,
             prepare: { progress in
                 if !MediaTools.isInstalled {
                     try await MediaTools.install(
@@ -313,7 +320,8 @@ final class ShelfContextMenu: NSObject {
         verb: String,
         items: [ShelfItem],
         anchor: ShelfItem.ID?,
-        prepare: @escaping (VideoProgressPanel) async throws -> Void = { _ in },
+        risesFromShelf: Bool = false,
+        prepare: @escaping (any JobProgress) async throws -> Void = { _ in },
         _ work: @escaping (ShelfItem, URL, @escaping @MainActor (Double) -> Void) async throws -> URL
     ) {
         guard videoTask == nil else {
@@ -327,20 +335,39 @@ final class ShelfContextMenu: NSObject {
             Dialog.showProblem(failureTitle, details: error.localizedDescription)
             return
         }
-        let progress = VideoProgressPanel()
+        // Download Audio's bubble rises out of the shelf (when it's on screen) and
+        // sinks back in before the files appear there; everything else uses the
+        // floating card and adds each file as soon as it's made.
+        let bubble = risesFromShelf
+            ? ShelfProgressBubble(shelfWindow: shelfWindow(), rowScreenFrame: rowScreenFrame, setHiddenItems: setHiddenItems)
+            : nil
+        let progress: any JobProgress = bubble ?? VideoProgressPanel()
         videoTask = Task {
+            var heldBack: [URL] = []
             defer {
                 progress.close()
                 videoTask = nil
+                // After a failure or Cancel, still add what was finished.
+                if !heldBack.isEmpty {
+                    viewModel.addStowCopies(heldBack, after: anchor)
+                }
             }
             do {
                 try await prepare(progress)
                 for (index, item) in items.enumerated() {
                     progress.begin(verb, item, index: index, count: items.count)
                     let result = try await work(item, folder) { progress.update(progress: $0) }
-                    viewModel.addStowCopies([result], after: anchor)
+                    if bubble != nil {
+                        heldBack.append(result)
+                    } else {
+                        viewModel.addStowCopies([result], after: anchor)
+                    }
                 }
-                await progress.finish()
+                let results = heldBack
+                heldBack = []
+                await progress.finish { [viewModel] in
+                    viewModel.addStowCopies(results, after: anchor)
+                }
             } catch {
                 // Cancel isn't a problem to report.
                 if !Task.isCancelled {

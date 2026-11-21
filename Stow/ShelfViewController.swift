@@ -59,6 +59,8 @@ final class ShelfViewController: NSViewController {
 
     /// Builds the right-click menus and runs their commands.
     private lazy var contextMenus = ShelfContextMenu(viewModel: viewModel)
+    /// Items whose rows are kept invisible for now (see setHiddenItems).
+    private var hiddenItemIDs: Set<ShelfItem.ID> = []
     private let dragSource = ShelfDragSource()
 
     /// The rows the list is currently showing, built from `viewModel.items`.
@@ -249,6 +251,9 @@ final class ShelfViewController: NSViewController {
                   let frame = self.collectionView.layoutAttributesForItem(at: indexPath)?.frame else { return nil }
             return (self.collectionView, frame)
         }
+        contextMenus.shelfWindow = { [weak self] in self?.view.window }
+        contextMenus.rowScreenFrame = { [weak self] id in self?.screenFrame(ofRowContaining: id) }
+        contextMenus.setHiddenItems = { [weak self] ids in self?.setHiddenItems(ids) }
         collectionView.selectedFileURLs = { [weak self] in
             self?.selectedItems.compactMap { $0.fileURL } ?? []
         }
@@ -686,6 +691,33 @@ final class ShelfViewController: NSViewController {
         NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
     }
 
+    /// Where the row holding item `id` is on screen, scrolled into view first. Nil if
+    /// it isn't shown (filtered out, or inside a closed stack's row it is: then the
+    /// stack's row).
+    private func screenFrame(ofRowContaining id: ShelfItem.ID) -> NSRect? {
+        guard let index = rows.firstIndex(where: { $0.items.contains { $0.id == id } }),
+              let window = view.window else { return nil }
+        collectionView.scrollToItems(at: [IndexPath(item: index, section: 0)], scrollPosition: .nearestHorizontalEdge)
+        collectionView.layoutSubtreeIfNeeded()
+        guard let frame = rowFrame(at: index) else { return nil }
+        let visible = frame.intersection(collectionView.visibleRect)
+        guard !visible.isEmpty else { return nil }
+        return window.convertToScreen(collectionView.convert(visible, to: nil))
+    }
+
+    /// Hides the rows of these items (or shows every row again, fading in, when
+    /// the set is empty).
+    private func setHiddenItems(_ ids: Set<ShelfItem.ID>) {
+        hiddenItemIDs = ids
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = ids.isEmpty ? 0.3 : 0
+            for indexPath in collectionView.indexPathsForVisibleItems() where rows.indices.contains(indexPath.item) {
+                let hidden = rows[indexPath.item].items.contains { ids.contains($0.id) }
+                collectionView.item(at: indexPath)?.view.animator().alphaValue = hidden ? 0 : 1
+            }
+        }
+    }
+
     private func rowFrame(at index: Int) -> NSRect? {
         guard rows.indices.contains(index) else { return nil }
         return collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame
@@ -728,6 +760,8 @@ extension ShelfViewController: NSCollectionViewDataSource {
         let row = rows[indexPath.item]
         let isExpanded = if case .stack(let id, _) = row { expandedStacks.contains(id) || !filter.isEmpty } else { false }
         cell.configure(with: row, isExpanded: isExpanded)
+        // Rows the Download Audio bubble is about to pour into stay invisible until then.
+        cell.view.alphaValue = row.items.contains { hiddenItemIDs.contains($0.id) } ? 0 : 1
         // Cells are reused for other rows, so these find the row by its ID.
         let rowID = row.id
         cell.onPress = { [weak self] in self?.pressed(rowID: rowID) }
