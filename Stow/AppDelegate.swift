@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !Self.isRunningTests else { return }
 
+        // Bring settings and the shelf over from the old sandboxed build, once.
+        SandboxMigration.runIfNeeded()
+
         // Put back what was on the shelf at the last quit, then clean up Stow's own
         // copies that are no longer on it, and save from now on.
         let archive = ShelfArchive()

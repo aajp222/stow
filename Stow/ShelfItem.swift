@@ -65,6 +65,10 @@ struct ShelfItem: Identifiable, Equatable {
         if case .file(let url) = content { url } else { nil }
     }
 
+    var linkURL: URL? {
+        if case .link(let url, _) = content { url } else { nil }
+    }
+
     var displayName: String {
         switch content {
         case .file(let url):
