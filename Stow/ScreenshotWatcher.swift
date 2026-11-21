@@ -50,10 +50,9 @@ final class ScreenshotWatcher {
         folder = nil
         known = []
         guard let bookmark, let folder = Self.resolve(bookmark) else { return }
-        // A sandboxed app can only look inside a folder you chose, and only after
-        // starting access through the bookmark that remembers your choice.
-        if !accessedFolders.contains(folder) {
-            guard folder.startAccessingSecurityScopedResource() else { return }
+        // Stow isn't sandboxed any more, so it can read the folder either way, but
+        // start access through the bookmark in case the folder needs it.
+        if !accessedFolders.contains(folder), folder.startAccessingSecurityScopedResource() {
             accessedFolders.insert(folder)
         }
         self.folder = folder

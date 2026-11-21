@@ -16,6 +16,12 @@ final class ShelfContextMenu: NSObject {
     /// Where to show the share menu: a view and a rectangle in it (the shelf's list
     /// and the selected row). Set by ShelfViewController.
     var shareAnchor: () -> (view: NSView, rect: NSRect)? = { nil }
+    /// The shelf's window, and two things the Download Audio bubble needs from the
+    /// list: where an item's row is on screen, and hiding rows until it pours into
+    /// them. Set by ShelfViewController.
+    var shelfWindow: () -> NSWindow? = { nil }
+    var rowScreenFrame: (ShelfItem.ID) -> NSRect? = { _ in nil }
+    var setHiddenItems: (Set<ShelfItem.ID>) -> Void = { _ in }
     /// The open Trim Video window and the progress window of a running video action.
     private var trimWindow: TrimWindowController?
     private var videoTask: Task<Void, Never>?
@@ -57,6 +63,11 @@ final class ShelfContextMenu: NSObject {
                 menu.addItem(quickActions)
                 menu.addItem(makeItem("Rename…", #selector(renameItem), enabled: urls.count == 1))
                 menu.addItem(makeItem("Move…", #selector(moveItems)))
+            }
+            if allLinks, items.allSatisfy({ $0.linkURL.map(YouTubeAudio.isVideoLink) ?? false }) {
+                let quickActions = NSMenuItem(title: "Quick Actions", action: nil, keyEquivalent: "")
+                quickActions.submenu = makeLinkQuickActionsMenu()
+                menu.addItem(quickActions)
             }
             menu.addItem(makeItem("Copy", #selector(copyItems)))
             if allFiles {
@@ -178,7 +189,75 @@ final class ShelfContextMenu: NSObject {
         return menu
     }
 
+    /// Quick Actions for YouTube links: Download Audio.
+    private func makeLinkQuickActionsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let downloadAudio = NSMenuItem(title: "Download Audio", action: nil, keyEquivalent: "")
+        downloadAudio.isEnabled = videoTask == nil
+        let formats = NSMenu()
+        formats.autoenablesItems = false
+        for format in YouTubeAudio.Format.allCases {
+            let item = makeItem(format.title, #selector(downloadAudio(_:)))
+            item.representedObject = format.rawValue
+            formats.addItem(item)
+        }
+        downloadAudio.submenu = formats
+        menu.addItem(downloadAudio)
+        return menu
+    }
+
     // MARK: - Video
+
+    /// Saves the sound of each YouTube link as an audio file. The first time, it asks
+    /// to download the tools it needs (MediaTools) and does that first.
+    @objc private func downloadAudio(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let format = YouTubeAudio.Format(rawValue: rawValue) else { return }
+        let links = targets.filter { $0.linkURL != nil }
+        guard !links.isEmpty else { return }
+        if !MediaTools.isInstalled, !askToDownloadTools() {
+            return
+        }
+        runVideoAction(
+            "Couldn't download the audio",
+            verb: "Downloading",
+            items: links,
+            anchor: targets.last?.id,
+            risesFromShelf: true,
+            prepare: { progress in
+                if !MediaTools.isInstalled {
+                    try await MediaTools.install(
+                        onStep: { name, index, count in
+                            progress.begin("Getting", ShelfItem(content: .text(name)), index: index, count: count)
+                        },
+                        onProgress: { progress.update(progress: $0) }
+                    )
+                } else {
+                    await MediaTools.updateYTDLPIfDue()
+                }
+            }
+        ) { item, folder, onProgress in
+            guard let url = item.linkURL else { throw CancellationError() }
+            return try await YouTubeAudio.download(url, as: format, into: folder, onProgress: onProgress)
+        }
+    }
+
+    private func askToDownloadTools() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Download the tools for Download Audio?"
+        alert.informativeText = """
+            Stow uses yt-dlp, ffmpeg and Deno to save audio from YouTube. They're free, \
+            open-source programs, \(MediaTools.downloadSizeDescription) in all, and Stow keeps them \
+            in its own folder. This happens once.
+
+            Downloading from YouTube is against YouTube's terms of service, so only save \
+            audio you have the right to.
+            """
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Cancel")
+        return Dialog.run { alert.runModal() } == .alertFirstButtonReturn
+    }
 
     @objc private func convertVideos(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
@@ -223,6 +302,28 @@ final class ShelfContextMenu: NSObject {
         anchor: ShelfItem.ID?,
         _ work: @escaping (URL, URL, @escaping @MainActor (Double) -> Void) async throws -> URL
     ) {
+        runVideoAction(
+            failureTitle,
+            verb: verb,
+            items: urls.map { ShelfItem(content: .file($0)) },
+            anchor: anchor
+        ) { item, folder, onProgress in
+            guard let url = item.fileURL else { throw CancellationError() }
+            return try await work(url, folder, onProgress)
+        }
+    }
+
+    /// The same for any shelf items. `prepare` runs first, behind the same progress
+    /// window (Download Audio fetches its tools there).
+    private func runVideoAction(
+        _ failureTitle: String,
+        verb: String,
+        items: [ShelfItem],
+        anchor: ShelfItem.ID?,
+        risesFromShelf: Bool = false,
+        prepare: @escaping (any JobProgress) async throws -> Void = { _ in },
+        _ work: @escaping (ShelfItem, URL, @escaping @MainActor (Double) -> Void) async throws -> URL
+    ) {
         guard videoTask == nil else {
             NSSound.beep()
             return
@@ -234,19 +335,39 @@ final class ShelfContextMenu: NSObject {
             Dialog.showProblem(failureTitle, details: error.localizedDescription)
             return
         }
-        let progress = VideoProgressPanel()
+        // Download Audio's bubble rises out of the shelf (when it's on screen) and
+        // sinks back in before the files appear there; everything else uses the
+        // floating card and adds each file as soon as it's made.
+        let bubble = risesFromShelf
+            ? ShelfProgressBubble(shelfWindow: shelfWindow(), rowScreenFrame: rowScreenFrame, setHiddenItems: setHiddenItems)
+            : nil
+        let progress: any JobProgress = bubble ?? VideoProgressPanel()
         videoTask = Task {
+            var heldBack: [URL] = []
             defer {
                 progress.close()
                 videoTask = nil
+                // After a failure or Cancel, still add what was finished.
+                if !heldBack.isEmpty {
+                    viewModel.addStowCopies(heldBack, after: anchor)
+                }
             }
             do {
-                for (index, url) in urls.enumerated() {
-                    progress.begin(verb, url, index: index, count: urls.count)
-                    let result = try await work(url, folder) { progress.update(progress: $0) }
-                    viewModel.addStowCopies([result], after: anchor)
+                try await prepare(progress)
+                for (index, item) in items.enumerated() {
+                    progress.begin(verb, item, index: index, count: items.count)
+                    let result = try await work(item, folder) { progress.update(progress: $0) }
+                    if bubble != nil {
+                        heldBack.append(result)
+                    } else {
+                        viewModel.addStowCopies([result], after: anchor)
+                    }
                 }
-                await progress.finish()
+                let results = heldBack
+                heldBack = []
+                await progress.finish { [viewModel] in
+                    viewModel.addStowCopies(results, after: anchor)
+                }
             } catch {
                 // Cancel isn't a problem to report.
                 if !Task.isCancelled {

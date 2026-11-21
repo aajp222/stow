@@ -140,19 +140,25 @@ final class VideoProgressPanel {
 
     /// Moves on to file number `index` (0-based) of `count`.
     func begin(_ verb: String, _ url: URL, index: Int, count: Int) {
+        begin(verb, ShelfItem(content: .file(url)), index: index, count: count)
+    }
+
+    /// Moves on to shelf item number `index` (0-based) of `count`: a file, or a link
+    /// that Download Audio is working on.
+    func begin(_ verb: String, _ item: ShelfItem, index: Int, count: Int) {
+        let name = item.displayName
         model.verb = verb
-        model.fileName = url.lastPathComponent
+        model.fileName = name
         model.index = index
         model.count = count
         model.fraction = 0
         model.thumbnail = nil
         panel.setContentSize(panel.contentView?.fittingSize ?? panel.frame.size)
         Task {
-            let item = ShelfItem(content: .file(url))
             let scale = panel.screen?.backingScaleFactor ?? 2
             let thumbnail = await ThumbnailProvider.shared.thumbnail(for: item, size: CGSize(width: 88, height: 88), scale: scale)
             // Unless the job has moved on to the next file meanwhile.
-            if model.fileName == url.lastPathComponent {
+            if model.fileName == name {
                 model.thumbnail = thumbnail
             }
         }

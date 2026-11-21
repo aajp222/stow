@@ -154,7 +154,8 @@ final class ShelfViewModel {
 
     /// Adds files Stow just made (by a quick action, say) just after `anchorID`'s item,
     /// or after its whole stack, or at the end.
-    func addStowCopies(_ urls: [URL], after anchorID: ShelfItem.ID?) {
+    @discardableResult
+    func addStowCopies(_ urls: [URL], after anchorID: ShelfItem.ID?) -> [ShelfItem.ID] {
         let newItems = urls.map { ShelfItem(content: .file($0.standardizedFileURL), isStowCopy: true) }
         var index = items.endIndex
         if let anchorID, let anchor = items.firstIndex(where: { $0.id == anchorID }) {
@@ -162,6 +163,7 @@ final class ShelfViewModel {
             index = (stackID.flatMap { id in items.lastIndex { $0.stackID == id } } ?? anchor) + 1
         }
         items.insert(contentsOf: newItems, at: index)
+        return newItems.map(\.id)
     }
 
     /// "Add Clipboard Contents to Stow": adds whatever is on the clipboard, the same

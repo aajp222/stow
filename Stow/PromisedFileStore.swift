@@ -1,8 +1,7 @@
 import Foundation
 
 /// Owns the folder where file promises are written:
-/// `Application Support/Stow/Promised/<one folder per drop>/<file>` inside Stow's
-/// sandbox container (`~/Library/Containers/com.aaryanjigarpanchal.Stow/Data/Library/`).
+/// `~/Library/Application Support/Stow/Promised/<one folder per drop>/<file>`.
 ///
 /// Files made from the clipboard ("Add Clipboard Contents to Stow") live here too.
 ///
