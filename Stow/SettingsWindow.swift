@@ -146,6 +146,14 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Keep clipboard history on the shelf", isOn: $settings.keepClipboardHistory)
+            } header: {
+                Text("Clipboard")
+            } footer: {
+                Text("Everything you copy goes into a Clipboard stack, newest first, keeping the last \(ClipboardWatcher.limit). Passwords copied from password managers are skipped. The first time, macOS asks whether Stow may paste from other apps: choose Allow.")
+            }
+
+            Section {
                 HStack(spacing: 12) {
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()

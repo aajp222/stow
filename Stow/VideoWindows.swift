@@ -14,7 +14,7 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
 
     /// `onTrim` is called if you click Trim; `onClose` once the window has gone,
     /// either way.
-    init(url: URL, onTrim: @escaping (CMTimeRange) -> Void, onClose: @escaping () -> Void) {
+    init(url: URL, title: String? = nil, onTrim: @escaping (CMTimeRange) -> Void, onClose: @escaping () -> Void) {
         player = AVPlayer(url: url)
         self.onTrim = onTrim
         self.onClose = onClose
@@ -25,7 +25,7 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         super.init()
-        window.title = "Trim “\(url.lastPathComponent)”"
+        window.title = title ?? "Trim “\(url.lastPathComponent)”"
         window.isReleasedWhenClosed = false
         window.delegate = self
         playerView.player = player

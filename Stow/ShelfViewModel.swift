@@ -189,7 +189,91 @@ final class ShelfViewModel {
         }
     }
 
+    /// Adds a text item (text read out of an image, say) just after `anchorID`'s item.
+    @discardableResult
+    func addText(_ text: String, after anchorID: ShelfItem.ID?) -> ShelfItem.ID {
+        let item = ShelfItem(content: .text(text))
+        var index = items.endIndex
+        if let anchorID, let anchor = items.firstIndex(where: { $0.id == anchorID }) {
+            let stackID = items[anchor].stackID
+            index = (stackID.flatMap { id in items.lastIndex { $0.stackID == id } } ?? anchor) + 1
+        }
+        items.insert(item, at: index)
+        return item.id
+    }
+
+    // MARK: - Clipboard history
+
+    /// The stack that holds clipboard history. The same ID every launch, so the
+    /// stack carries on after a relaunch.
+    static let clipboardStackID = UUID(uuidString: "C1B0A2D0-5704-4C1B-9B0A-2D05704C1B0A")!
+    static let clipboardStackName = "Clipboard"
+
+    /// Puts something you just copied at the top of the Clipboard stack, unless it's
+    /// the same as the newest entry, and lets the oldest entries go once there are
+    /// more than `limit`. The stack is made at the end of the shelf the first time.
+    func addClipboardEntries(_ incoming: [IncomingItem], limit: Int) {
+        let stackID = Self.clipboardStackID
+        var entries: [ShelfItem] = []
+        for thing in incoming {
+            let content: ShelfItem.Content
+            var isStowCopy = false
+            switch thing {
+            case .file(let url):
+                content = .file(url.standardizedFileURL)
+                isStowCopy = promisedFiles.owns(url)
+            case .link(let url, let title):
+                content = .link(url, title: title)
+            case .text(let text):
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                content = .text(text)
+            case .image(let png):
+                guard let saved = saveImage(png), case .file(let url) = saved.content else { continue }
+                content = .file(url)
+                isStowCopy = true
+            case .promise:
+                continue
+            }
+            var item = ShelfItem(content: content, isStowCopy: isStowCopy, stackID: stackID)
+            item.stackName = Self.clipboardStackName
+            entries.append(item)
+        }
+        let members = items.filter { $0.stackID == stackID }
+        // Copying the same thing twice in a row doesn't add it again.
+        if let newest = members.first, entries.count == 1, Self.sameContent(newest.content, entries[0].content) {
+            return
+        }
+        guard !entries.isEmpty else { return }
+        let start = items.firstIndex { $0.stackID == stackID } ?? items.endIndex
+        items.insert(contentsOf: entries, at: start)
+
+        // Oldest last; pinned entries never count against the limit or go.
+        let all = items.filter { $0.stackID == stackID && !$0.isPinned }
+        guard all.count > limit else { return }
+        let dropped = all.suffix(all.count - limit)
+        let droppedIDs = Set(dropped.map(\.id))
+        items.removeAll { droppedIDs.contains($0.id) }
+        promisedFiles.trash(dropped.filter(\.isStowCopy).compactMap(\.fileURL))
+    }
+
+    private static func sameContent(_ a: ShelfItem.Content, _ b: ShelfItem.Content) -> Bool {
+        switch (a, b) {
+        case (.text(let x), .text(let y)): x == y
+        case (.link(let x, _), .link(let y, _)): x == y
+        case (.file(let x), .file(let y)): x.standardizedFileURL == y.standardizedFileURL
+        default: false
+        }
+    }
+
     // MARK: - Renaming and moving
+
+    /// Points items at their files' new places after Batch Rename renamed them.
+    func relocate(_ ids: [ShelfItem.ID], to urls: [URL]) {
+        for (id, url) in zip(ids, urls) {
+            guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
+            items[index] = items[index].relocated(to: url.standardizedFileURL, isStowCopy: items[index].isStowCopy)
+        }
+    }
 
     /// Renames the item's file on disk (it's the real file, not just a label) and
     /// keeps the item pointing at it.

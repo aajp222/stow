@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// What a running video, audio or download job reports its progress to: the
-/// floating progress card (VideoProgressPanel) or the bubble that rises out of the
-/// shelf (ShelfProgressBubble).
+/// What a running video, audio, GIF or download job reports its progress to: the
+/// bubble that rises out of the shelf (ShelfProgressBubble), or the floating
+/// progress card (VideoProgressPanel) when the shelf isn't on screen.
 protocol JobProgress: AnyObject {
     func show(onCancel: @escaping () -> Void)
     func begin(_ verb: String, _ item: ShelfItem, index: Int, count: Int)
@@ -13,11 +13,17 @@ protocol JobProgress: AnyObject {
     /// itself into their row.
     func finish(revealing insert: @escaping () -> [ShelfItem.ID]) async
     func close()
+    /// A picture of what's being downloaded, once it's known.
+    func showThumbnail(at url: URL)
+}
+
+extension JobProgress {
+    func showThumbnail(at url: URL) {}
 }
 
 extension VideoProgressPanel: JobProgress {
     func finish(revealing insert: @escaping () -> [ShelfItem.ID]) async {
-        insert()
+        _ = insert()
         await finish()
     }
 }
@@ -149,14 +155,34 @@ final class ShelfProgressBubble: JobProgress {
         model.index = index
         model.count = count
         model.fraction = 0
-        guard let url = item.linkURL else {
-            model.image = nil
+        model.image = nil
+        let name = model.name
+        if item.fileURL != nil {
+            // The file's own picture: a frame of the video, the cover art, the photo.
+            Task {
+                let scale = panel.screen?.backingScaleFactor ?? 2
+                let side = Self.floatingSize
+                guard let image = await ThumbnailProvider.shared.thumbnail(for: item, size: CGSize(width: side, height: side), scale: scale),
+                      model.name == name, model.image == nil else { return }
+                withAnimation(.easeInOut(duration: 0.4)) { model.image = image }
+            }
             return
         }
+        guard let url = item.linkURL else { return }
         Task {
-            let image = await YouTubeAudio.thumbnail(for: url)
+            // YouTube's thumbnails can be fetched at once; other sites' come
+            // through showThumbnail once yt-dlp has looked the page up.
+            guard let image = await MediaDownload.quickThumbnail(for: url), model.name == name, model.image == nil else { return }
+            withAnimation(.easeInOut(duration: 0.4)) { model.image = image }
+        }
+    }
+
+    func showThumbnail(at url: URL) {
+        guard model.image == nil else { return }
+        let name = model.name
+        Task {
             // Unless the job has moved on meanwhile.
-            guard model.name == item.displayName else { return }
+            guard let image = await MediaDownload.image(at: url), model.name == name, model.image == nil else { return }
             withAnimation(.easeInOut(duration: 0.4)) { model.image = image }
         }
     }
@@ -495,10 +521,20 @@ struct ShelfBubbleView: View {
             .help("Cancel")
             .transition(.opacity)
         } else if !hasImage {
-            Image(systemName: model.verb == "Getting" ? "arrow.down" : "music.note")
+            Image(systemName: symbol)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .symbolEffect(.pulse)
+        }
+    }
+
+    /// What's shown in the middle until there's a picture.
+    private var symbol: String {
+        switch model.verb {
+        case "Getting", "Downloading": "arrow.down"
+        case "Making GIF": "photo.stack"
+        case "Trimming": "scissors"
+        default: "arrow.triangle.2.circlepath"
         }
     }
 

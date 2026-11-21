@@ -54,6 +54,7 @@ final class AppSettings {
         static let showCountInMenuBar = "ShowCountInMenuBar"
         static let shortcut = "Shortcut"
         static let stowScreenshots = "StowScreenshots"
+        static let keepClipboardHistory = "KeepClipboardHistory"
         static let screenshotFolder = "ScreenshotFolderBookmark"
         static let checkForUpdates = "CheckForUpdates"
         static let lastUpdateCheck = "LastUpdateCheck"
@@ -76,6 +77,7 @@ final class AppSettings {
             Key.stackDroppedFiles: true,
             Key.showCountInMenuBar: true,
             Key.stowScreenshots: false,
+            Key.keepClipboardHistory: false,
             Key.checkForUpdates: true,
             Key.hasSeenWelcome: false,
         ])
@@ -167,6 +169,19 @@ final class AppSettings {
     // MARK: - Screenshots
 
     /// Put new screenshots on the shelf as soon as they're saved.
+    /// Put everything you copy in a "Clipboard" stack on the shelf (ClipboardWatcher).
+    var keepClipboardHistory: Bool {
+        get {
+            access(keyPath: \.keepClipboardHistory)
+            return defaults.bool(forKey: Key.keepClipboardHistory)
+        }
+        set {
+            withMutation(keyPath: \.keepClipboardHistory) {
+                defaults.set(newValue, forKey: Key.keepClipboardHistory)
+            }
+        }
+    }
+
     var stowScreenshots: Bool {
         get {
             access(keyPath: \.stowScreenshots)

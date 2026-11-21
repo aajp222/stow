@@ -77,6 +77,37 @@ struct ShelfViewModelTests {
         return viewModel
     }
 
+    @Test func clipboardHistoryKeepsTheNewestFirstAndDropsTheOldest() {
+        let loose = ShelfItem(content: .text("loose"))
+        let model = viewModel([loose])
+        for number in 1...5 {
+            model.addClipboardEntries([.text("copy \(number)")], limit: 3)
+        }
+        #expect(names(model) == ["loose", "copy 5", "copy 4", "copy 3"])
+        let clipboard = model.items.dropFirst()
+        #expect(clipboard.allSatisfy { $0.stackID == ShelfViewModel.clipboardStackID })
+        #expect(clipboard.allSatisfy { $0.stackName == ShelfViewModel.clipboardStackName })
+    }
+
+    @Test func copyingTheSameThingTwiceAddsItOnce() {
+        let model = viewModel([])
+        model.addClipboardEntries([.text("same")], limit: 10)
+        model.addClipboardEntries([.text("same")], limit: 10)
+        model.addClipboardEntries([.link(URL(string: "https://example.com")!, title: nil)], limit: 10)
+        model.addClipboardEntries([.text("   ")], limit: 10)
+        #expect(names(model) == ["example.com", "same"])
+    }
+
+    @Test func pinnedClipboardEntriesStay() {
+        let model = viewModel([])
+        model.addClipboardEntries([.text("keep me")], limit: 2)
+        model.setPinned([model.items[0].id], true)
+        for number in 1...4 {
+            model.addClipboardEntries([.text("copy \(number)")], limit: 2)
+        }
+        #expect(names(model) == ["copy 4", "copy 3", "keep me"])
+    }
+
     @Test func reorderMovesItemsBeforeTheTarget() {
         let a = ShelfItem(content: .text("a"))
         let b = ShelfItem(content: .text("b"))
